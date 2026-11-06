@@ -67,7 +67,10 @@ enum Commands {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or("warn,restgine=info,restgine_cli=info"),
+    )
+    .init();
 
     // If run without arguments (e.g. double-clicked from file explorer)
     if std::env::args().len() <= 1 {
