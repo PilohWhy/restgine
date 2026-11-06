@@ -77,4 +77,9 @@ impl Camera3D {
     pub fn view_proj_matrix(&self) -> Mat4 {
         self.projection_matrix() * self.view_matrix()
     }
+
+    /// Extract 3D camera frustum for native object & chunk culling.
+    pub fn frustum(&self) -> crate::culling::Frustum {
+        crate::culling::Frustum::from_view_proj(self.view_proj_matrix())
+    }
 }

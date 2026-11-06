@@ -140,6 +140,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .or_else(|_| window.set_cursor_grab(CursorGrabMode::Confined));
     window.set_cursor_visible(false);
 
+    // Fullscreen state tracker
+    let mut is_fullscreen = false;
+
     // 2. Rendering Pipelines
     let mut mesh3d_pipeline =
         Mesh3DPipeline::new(device, config.format, config.width, config.height);
@@ -202,6 +205,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut key_d = false;
     let mut key_space = false;
     let mut key_shift = false;
+    let mut key_alt = false;
 
     // Realistic Flashlight Controller
     let initial_look = Vec3::new(0.0, 0.0, -1.0);
@@ -234,6 +238,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut grass_instances_by_variant: Vec<Vec<GrassInstanceRaw>> = (0..num_grass_variants)
         .map(|_| Vec::with_capacity(FoliagePipeline::MAX_INSTANCES_PER_VARIANT))
         .collect();
+
+    // High-performance foliage chunk cache to eliminate PCIe bandwidth spam
+    let mut last_foliage_center_cx = i32::MIN;
+    let mut last_foliage_center_cz = i32::MIN;
+    let mut last_foliage_tier = settings.foliage;
+    let mut cached_grass_counts = vec![0u32; num_grass_variants];
+
     let mut hud_instances: Vec<SpriteInstanceRaw> = Vec::with_capacity(512);
     let scratchpad = ThreadScratchpad::new();
 
@@ -316,6 +327,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             }
                         }
+                        // Toggle Fullscreen on F11 or Alt+Enter
+                        KeyCode::F11 => {
+                            if is_pressed {
+                                is_fullscreen = !is_fullscreen;
+                                if is_fullscreen {
+                                    window.set_fullscreen(Some(
+                                        winit::window::Fullscreen::Borderless(None),
+                                    ));
+                                } else {
+                                    window.set_fullscreen(None);
+                                }
+                            }
+                        }
+                        KeyCode::Enter if key_alt => {
+                            if is_pressed {
+                                is_fullscreen = !is_fullscreen;
+                                if is_fullscreen {
+                                    window.set_fullscreen(Some(
+                                        winit::window::Fullscreen::Borderless(None),
+                                    ));
+                                } else {
+                                    window.set_fullscreen(None);
+                                }
+                            }
+                        }
                         // Toggle Flashlight with 'F' key
                         KeyCode::KeyF => {
                             if is_pressed {
@@ -328,6 +364,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         KeyCode::KeyD => key_d = is_pressed,
                         KeyCode::Space => key_space = is_pressed,
                         KeyCode::ShiftLeft | KeyCode::ShiftRight => key_shift = is_pressed,
+                        KeyCode::AltLeft | KeyCode::AltRight => key_alt = is_pressed,
                         _ => {}
                     }
                 }
@@ -411,11 +448,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     camera.target = Vec3A::from(render_player_pos + look_dir);
                     camera.fov_y_rad = settings.fov.to_radians();
 
+                    // Native Engine Frustum Extraction for All 3D Objects & Chunks
+                    let frustum = camera.frustum();
+
                     // --- UPDATE REALISTIC DYNAMIC FLASHLIGHT ---
                     let is_moving = key_w || key_s || key_a || key_d;
                     flashlight.update(dt, render_player_pos, look_dir, is_moving, key_shift);
 
-                    // --- STREAM VISIBLE TERRAIN CHUNKS ---
+                    // --- STREAM NATIVE FRUSTUM-CULLED TERRAIN CHUNKS ---
                     let chunk_size = TerrainPipeline::CHUNK_SIZE;
                     let center_cx = (render_player_pos.x / chunk_size).floor() as i32;
                     let center_cz = (render_player_pos.z / chunk_size).floor() as i32;
@@ -430,10 +470,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     terrain_instances.clear();
                     for cz in (center_cz - chunk_radius)..=(center_cz + chunk_radius) {
                         for cx in (center_cx - chunk_radius)..=(center_cx + chunk_radius) {
-                            terrain_instances.push(TerrainChunkInstance {
-                                chunk_offset: [cx as f32 * chunk_size, cz as f32 * chunk_size],
-                                _padding: [0.0, 0.0],
-                            });
+                            let chunk_min_x = cx as f32 * chunk_size;
+                            let chunk_min_z = cz as f32 * chunk_size;
+
+                            // Native Engine Frustum Culling
+                            if frustum.intersects_chunk(chunk_min_x, chunk_min_z, chunk_size, -2.0, 6.0) {
+                                terrain_instances.push(TerrainChunkInstance {
+                                    chunk_offset: [chunk_min_x, chunk_min_z],
+                                    _padding: [0.0, 0.0],
+                                });
+                            }
                         }
                     }
                     queue.write_buffer(
@@ -442,13 +488,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         bytemuck::cast_slice(&terrain_instances),
                     );
 
-                    // --- STREAM DENSE CARPET 3D FOLIAGE AROUND PLAYER ---
-                    // Smart concentric optimization: lush dense carpet around player, tapering naturally outward
+                    // --- HIGH-PERFORMANCE CACHED FOLIAGE SCATTERING ---
+                    // Density with 100% gapless Jittered Grid distribution
                     let base_foliage_density = match settings.foliage {
-                        QualityTier::Low => 550,
-                        QualityTier::Medium => 800,
-                        QualityTier::High => 1100,
-                        QualityTier::Epic => 1400,
+                        QualityTier::Low => 600,
+                        QualityTier::Medium => 900,
+                        QualityTier::High => 1250,
+                        QualityTier::Epic => 1600,
                     };
                     let foliage_radius = match settings.foliage {
                         QualityTier::Low => 1,
@@ -457,34 +503,48 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         QualityTier::Epic => 3,
                     };
 
-                    for list in &mut grass_instances_by_variant {
-                        list.clear();
-                    }
-                    for cz in (center_cz - foliage_radius)..=(center_cz + foliage_radius) {
-                        for cx in (center_cx - foliage_radius)..=(center_cx + foliage_radius) {
-                            let dist = (cx - center_cx).abs().max((cz - center_cz).abs());
-                            let clumps = if dist <= 1 {
-                                base_foliage_density
-                            } else {
-                                base_foliage_density / 3
-                            };
+                    // Only re-scatter and re-upload when changing chunks or settings
+                    let needs_foliage_rebuild = center_cx != last_foliage_center_cx
+                        || center_cz != last_foliage_center_cz
+                        || settings.foliage != last_foliage_tier;
 
-                            scatter_chunk_grass(
-                                cx,
-                                cz,
-                                clumps,
-                                num_grass_variants,
-                                &mut grass_instances_by_variant,
-                            );
+                    if needs_foliage_rebuild {
+                        last_foliage_center_cx = center_cx;
+                        last_foliage_center_cz = center_cz;
+                        last_foliage_tier = settings.foliage;
+
+                        for list in &mut grass_instances_by_variant {
+                            list.clear();
                         }
-                    }
-                    for (i, instances) in grass_instances_by_variant.iter().enumerate() {
-                        if !instances.is_empty() && i < foliage_pipeline.instance_buffers.len() {
-                            queue.write_buffer(
-                                &foliage_pipeline.instance_buffers[i],
-                                0,
-                                bytemuck::cast_slice(instances),
-                            );
+
+                        for cz in (center_cz - foliage_radius)..=(center_cz + foliage_radius) {
+                            for cx in (center_cx - foliage_radius)..=(center_cx + foliage_radius) {
+                                let dist = (cx - center_cx).abs().max((cz - center_cz).abs());
+                                let clumps = if dist <= 1 {
+                                    base_foliage_density
+                                } else {
+                                    base_foliage_density / 3
+                                };
+
+                                scatter_chunk_grass(
+                                    cx,
+                                    cz,
+                                    clumps,
+                                    num_grass_variants,
+                                    &mut grass_instances_by_variant,
+                                );
+                            }
+                        }
+
+                        for (i, instances) in grass_instances_by_variant.iter().enumerate() {
+                            cached_grass_counts[i] = instances.len() as u32;
+                            if !instances.is_empty() && i < foliage_pipeline.instance_buffers.len() {
+                                queue.write_buffer(
+                                    &foliage_pipeline.instance_buffers[i],
+                                    0,
+                                    bytemuck::cast_slice(instances),
+                                );
+                            }
                         }
                     }
 
@@ -554,20 +614,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         // Controls helper at bottom of screen
                         hud_instances.push(SpriteInstanceRaw {
                             position: [16.0, 16.0],
-                            size: [640.0, 32.0],
+                            size: [760.0, 32.0],
                             uv_min: [0.0, 0.0],
                             uv_max: [1.0 / 128.0, 1.0 / 128.0],
                             color_tint: [0.06, 0.09, 0.15, 0.85],
                         });
                         hud_instances.push(SpriteInstanceRaw {
                             position: [16.0, 46.0],
-                            size: [640.0, 2.0],
+                            size: [760.0, 2.0],
                             uv_min: [0.0, 0.0],
                             uv_max: [1.0 / 128.0, 1.0 / 128.0],
                             color_tint: [0.06, 0.72, 0.50, 0.8],
                         });
                         settings_ui::render_text(
-                            "WASD: MOVE | SHIFT: SPRINT | SPACE: JUMP | F: FLASHLIGHT | ESC: SETTINGS",
+                            "WASD: MOVE | SHIFT: SPRINT | SPACE: JUMP | F: FLASHLIGHT | F11: FULLSCREEN | ESC: SETTINGS",
                             24.0,
                             24.0,
                             8.0,
@@ -725,7 +785,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     timestamp_writes: None,
                                 });
 
-                            // 1A: Terrain Chunks with PBR and Normal Mapping
+                            // 1A: Terrain Chunks with PBR and Normal Mapping (Frustum Culled)
                             render_pass.set_pipeline(&terrain_pipeline.pipeline);
                             render_pass.set_bind_group(0, &mesh3d_pipeline.camera_bind_group, &[]);
                             render_pass.set_bind_group(1, &terrain_pipeline.material_bind_group, &[]);
@@ -747,7 +807,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 0..terrain_instances.len() as u32,
                             );
 
-                            // 1B: Dense 3D Foliage with Wind Sway & Alpha Cutout
+                            // 1B: Dense 3D Foliage with Wind Sway & Alpha Cutout (Cached buffers)
                             render_pass.set_pipeline(&foliage_pipeline.pipeline);
                             render_pass.set_bind_group(0, &mesh3d_pipeline.camera_bind_group, &[]);
                             render_pass.set_bind_group(1, &foliage_pipeline.material_bind_group, &[]);
@@ -758,7 +818,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             );
 
                             for (variant_idx, range) in foliage_pipeline.variant_ranges.iter().enumerate() {
-                                let count = grass_instances_by_variant[variant_idx].len() as u32;
+                                let count = cached_grass_counts[variant_idx];
                                 if count > 0 && variant_idx < foliage_pipeline.instance_buffers.len() {
                                     render_pass.set_vertex_buffer(
                                         1,

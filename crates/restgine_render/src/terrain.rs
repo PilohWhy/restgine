@@ -222,7 +222,17 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         }
     }
 
-    // 6. ACES Filmic Tonemapping
+    // 6. Atmospheric Twilight Horizon Fog (Smoothly eliminates chunk boundary teeth)
+    let dist = length(camera.camera_pos.xyz - in.world_pos);
+    let view_dist = camera.settings.w;
+    let fog_start = view_dist * 0.50;
+    let fog_end = view_dist * 0.98;
+    let fog_factor = clamp((dist - fog_start) / (fog_end - fog_start + 0.001), 0.0, 1.0);
+    let smooth_fog = fog_factor * fog_factor * (3.0 - 2.0 * fog_factor);
+    let horizon_fog_color = vec3<f32>(0.38, 0.24, 0.28);
+    lit_color = mix(lit_color, horizon_fog_color, smooth_fog);
+
+    // 7. ACES Filmic Tonemapping
     let a: f32 = 2.51;
     let b: f32 = 0.03;
     let c: f32 = 2.43;
