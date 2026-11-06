@@ -460,12 +460,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let center_cx = (render_player_pos.x / chunk_size).floor() as i32;
                     let center_cz = (render_player_pos.z / chunk_size).floor() as i32;
 
-                    let chunk_radius = match settings.view_distance {
-                        QualityTier::Low => 2,
-                        QualityTier::Medium => 3,
-                        QualityTier::High => 4,
-                        QualityTier::Epic => 5,
-                    };
+                    let actual_view_dist = settings.view_distance_world();
+                    let chunk_radius = (actual_view_dist / chunk_size).round() as i32;
 
                     terrain_instances.clear();
                     for cz in (center_cz - chunk_radius)..=(center_cz + chunk_radius) {
@@ -489,19 +485,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     );
 
                     // --- HIGH-PERFORMANCE CACHED FOLIAGE SCATTERING ---
-                    // Density with 100% gapless Jittered Grid distribution
-                    let base_foliage_density = match settings.foliage {
+                    // Density with 100% gapless Jittered Grid distribution.
+                    // Grass fades smoothly out at 34m (handled via vertex shader distance cull),
+                    // so foliage only spans a 3x3 chunk grid (foliage_radius = 1, covering 96m x 96m).
+                    let clumps_per_chunk = match settings.foliage {
                         QualityTier::Low => 600,
                         QualityTier::Medium => 900,
                         QualityTier::High => 1250,
                         QualityTier::Epic => 1600,
                     };
-                    let foliage_radius = match settings.foliage {
-                        QualityTier::Low => 1,
-                        QualityTier::Medium => 2,
-                        QualityTier::High => 2,
-                        QualityTier::Epic => 3,
-                    };
+                    let foliage_radius = 1;
 
                     // Only re-scatter and re-upload when changing chunks or settings
                     let needs_foliage_rebuild = center_cx != last_foliage_center_cx
@@ -519,17 +512,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                         for cz in (center_cz - foliage_radius)..=(center_cz + foliage_radius) {
                             for cx in (center_cx - foliage_radius)..=(center_cx + foliage_radius) {
-                                let dist = (cx - center_cx).abs().max((cz - center_cz).abs());
-                                let clumps = if dist <= 1 {
-                                    base_foliage_density
-                                } else {
-                                    base_foliage_density / 3
-                                };
-
                                 scatter_chunk_grass(
                                     cx,
                                     cz,
-                                    clumps,
+                                    clumps_per_chunk,
                                     num_grass_variants,
                                     &mut grass_instances_by_variant,
                                 );
@@ -576,7 +562,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         gamma: settings.gamma,
                         motion_blur: elapsed_time, // continuous time for live root-anchored wind sway & sky stars
                         fov_rad: settings.fov.to_radians(),
-                        view_dist: settings.view_distance_world(),
+                        view_dist: actual_view_dist,
                         quality_tiers: settings.quality_tiers_u32(),
                         quality_extra: settings.quality_extra_u32(),
                         flashlight_pos: flashlight.current_pos,

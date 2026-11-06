@@ -82,10 +82,10 @@ impl GameSettings {
 
     pub fn view_distance_world(&self) -> f32 {
         match self.view_distance {
-            QualityTier::Low => 80.0,
-            QualityTier::Medium => 140.0,
-            QualityTier::High => 220.0,
-            QualityTier::Epic => 350.0,
+            QualityTier::Low => 96.0,
+            QualityTier::Medium => 128.0,
+            QualityTier::High => 160.0,
+            QualityTier::Epic => 192.0,
         }
     }
 

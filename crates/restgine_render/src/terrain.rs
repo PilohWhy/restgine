@@ -225,8 +225,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // 6. Atmospheric Twilight Horizon Fog (Smoothly eliminates chunk boundary teeth)
     let dist = length(camera.camera_pos.xyz - in.world_pos);
     let view_dist = camera.settings.w;
-    let fog_start = view_dist * 0.50;
-    let fog_end = view_dist * 0.98;
+    let fog_start = view_dist * 0.40;
+    let fog_end = view_dist * 0.88;
     let fog_factor = clamp((dist - fog_start) / (fog_end - fog_start + 0.001), 0.0, 1.0);
     let smooth_fog = fog_factor * fog_factor * (3.0 - 2.0 * fog_factor);
     let horizon_fog_color = vec3<f32>(0.38, 0.24, 0.28);
@@ -362,6 +362,7 @@ impl TerrainPipeline {
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
             mipmap_filter: wgpu::FilterMode::Linear,
+            anisotropy_clamp: 16,
             ..Default::default()
         });
 
@@ -543,8 +544,11 @@ pub fn create_texture_from_bytes(
     label: &str,
     is_srgb: bool,
 ) -> Result<(wgpu::Texture, wgpu::TextureView), Box<dyn std::error::Error>> {
-    let img = image::load_from_memory(bytes)?.to_rgba8();
-    let (width, height) = img.dimensions();
+    let mut current_img = image::load_from_memory(bytes)?.to_rgba8();
+    let (base_width, base_height) = current_img.dimensions();
+
+    // Full power-of-two mipmap chain to eliminate texture aliasing and distant sparkling
+    let mip_level_count = (base_width.max(base_height) as f32).log2().floor() as u32 + 1;
 
     let format = if is_srgb {
         wgpu::TextureFormat::Rgba8UnormSrgb
@@ -555,11 +559,11 @@ pub fn create_texture_from_bytes(
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some(label),
         size: wgpu::Extent3d {
-            width,
-            height,
+            width: base_width,
+            height: base_height,
             depth_or_array_layers: 1,
         },
-        mip_level_count: 1,
+        mip_level_count,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format,
@@ -567,25 +571,37 @@ pub fn create_texture_from_bytes(
         view_formats: &[],
     });
 
-    queue.write_texture(
-        wgpu::ImageCopyTexture {
-            texture: &texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        &img,
-        wgpu::ImageDataLayout {
-            offset: 0,
-            bytes_per_row: Some(4 * width),
-            rows_per_image: Some(height),
-        },
-        wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
-    );
+    let mut w = base_width;
+    let mut h = base_height;
+
+    for mip in 0..mip_level_count {
+        if mip > 0 {
+            w = (w / 2).max(1);
+            h = (h / 2).max(1);
+            current_img =
+                image::imageops::resize(&current_img, w, h, image::imageops::FilterType::Triangle);
+        }
+
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &texture,
+                mip_level: mip,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &current_img,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * w),
+                rows_per_image: Some(h),
+            },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
 
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     Ok((texture, view))

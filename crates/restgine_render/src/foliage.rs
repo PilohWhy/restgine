@@ -101,12 +101,33 @@ fn vs_main(in: VertexInput, inst: InstanceInput) -> VertexOutput {
         inst.model_3,
     );
 
-    let world_pos = (model * vec4<f32>(in.position, 1.0)).xyz;
+    // Instance world position (translation column)
+    let inst_world_pos = inst.model_3.xyz;
+    let cam_dist = length(inst_world_pos - camera.camera_pos.xyz);
+
+    // Distance Cull & Smooth Fade Out:
+    // Beyond 34m, sub-pixel grass blades cause pixel sparkling and aliasing.
+    // We smoothly scale clumps down to the ground between 26m and 34m,
+    // and clip completely outside the viewing volume past 34m.
+    let dist_fade = clamp((34.0 - cam_dist) / 8.0, 0.0, 1.0);
+    if (dist_fade <= 0.0) {
+        // Discard in hardware clipping before rasterizer
+        out.clip_position = vec4<f32>(0.0, 0.0, 2.0, 1.0);
+        return out;
+    }
+
+    // Shrink clump seamlessly into ground as distance increases
+    let scaled_pos = vec3<f32>(
+        in.position.x * dist_fade,
+        in.position.y * dist_fade,
+        in.position.z * dist_fade,
+    );
+    let world_pos = (model * vec4<f32>(scaled_pos, 1.0)).xyz;
 
     // ROOT-ANCHORED WIND ANIMATION
     // in.position.y is local clump height (Y=0.0 at root, Y>0 at blade tip)
     let height_factor = clamp(in.position.y / 0.32, 0.0, 1.0);
-    let wind_bend = height_factor * height_factor; // Root is 100% rigid, tip sways gracefully
+    let wind_bend = height_factor * height_factor * dist_fade; // Root is 100% rigid, tip sways gracefully
 
     let time = camera.settings.y;
     let foliage_tier = f32(camera.quality_extra.y);
@@ -225,8 +246,8 @@ fn fs_main(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @location
     // Atmospheric Twilight Horizon Fog (Smoothly blends distant grass into sky)
     let dist = length(camera.camera_pos.xyz - in.world_pos);
     let view_dist = camera.settings.w;
-    let fog_start = view_dist * 0.50;
-    let fog_end = view_dist * 0.98;
+    let fog_start = view_dist * 0.40;
+    let fog_end = view_dist * 0.88;
     let fog_factor = clamp((dist - fog_start) / (fog_end - fog_start + 0.001), 0.0, 1.0);
     let smooth_fog = fog_factor * fog_factor * (3.0 - 2.0 * fog_factor);
     let horizon_fog_color = vec3<f32>(0.38, 0.24, 0.28);
@@ -377,6 +398,7 @@ impl FoliagePipeline {
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
             mipmap_filter: wgpu::FilterMode::Linear,
+            anisotropy_clamp: 16,
             ..Default::default()
         });
 
