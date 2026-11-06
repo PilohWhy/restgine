@@ -330,6 +330,7 @@ pub struct Mesh3DPipeline {
     pub shadow_pipeline: wgpu::RenderPipeline,
     pub camera_buffer: wgpu::Buffer,
     pub camera_bind_group: wgpu::BindGroup,
+    pub shadow_camera_bind_group: wgpu::BindGroup,
     pub bone_buffer: wgpu::Buffer,
     pub bone_bind_group: wgpu::BindGroup,
     pub cube_vertex_buffer: wgpu::Buffer,
@@ -632,11 +633,36 @@ impl Mesh3DPipeline {
             cache: None,
         });
 
+        // Dedicated Bind Group for the Shadow Pass (avoids conflicting texture usage)
+        let shadow_camera_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Mesh3D Shadow Camera Bind Group Layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+
+        let shadow_camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Mesh3D Shadow Camera Bind Group"),
+            layout: &shadow_camera_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: camera_buffer.as_entire_binding(),
+            }],
+        });
+
         // Directional Shadow Pipeline
         let shadow_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Shadow Pass Pipeline Layout"),
-                bind_group_layouts: &[&camera_bind_group_layout],
+                bind_group_layouts: &[&shadow_camera_bind_group_layout],
                 push_constant_ranges: &[],
             });
 
@@ -680,6 +706,7 @@ impl Mesh3DPipeline {
             shadow_pipeline,
             camera_buffer,
             camera_bind_group,
+            shadow_camera_bind_group,
             bone_buffer,
             bone_bind_group,
             cube_vertex_buffer,

@@ -610,7 +610,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                             shadow_pass.set_pipeline(&mesh3d_pipeline.shadow_pipeline);
                             shadow_pass
-                                .set_bind_group(0, &mesh3d_pipeline.camera_bind_group, &[]);
+                                .set_bind_group(0, &mesh3d_pipeline.shadow_camera_bind_group, &[]);
                             shadow_pass.set_vertex_buffer(
                                 0,
                                 mesh3d_pipeline.cube_vertex_buffer.slice(..),

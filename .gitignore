@@ -22,3 +22,5 @@ Thumbs.db
 steam_appid.txt
 *.exe
 *.dll
+
+settings.json
