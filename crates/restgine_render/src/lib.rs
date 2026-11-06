@@ -1,6 +1,7 @@
 pub mod batch;
 pub mod camera;
 pub mod camera3d;
+pub mod mesh3d;
 pub mod pipeline;
 pub mod visbuffer;
 pub mod window;
@@ -8,6 +9,7 @@ pub mod window;
 pub use batch::{IsaacRenderBatch, RenderQueueItem, SpriteInstanceRaw};
 pub use camera::PixelCamera;
 pub use camera3d::Camera3D;
+pub use mesh3d::{Mesh3DInstanceRaw, Mesh3DPipeline, Mesh3DVertex};
 pub use pipeline::{CameraUniform, SpritePipeline};
 pub use visbuffer::{MeshInstanceRaw, MeshVertex, VisibilityBufferTarget};
 pub use window::WindowContext;

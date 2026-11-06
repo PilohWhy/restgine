@@ -20,3 +20,5 @@ Thumbs.db
 
 # Steamworks local files
 steam_appid.txt
+*.exe
+*.dll

@@ -10,6 +10,10 @@ description = "Command line interface and standalone runtime for Restgine"
 name = "restgine"
 path = "src/main.rs"
 
+[[bin]]
+name = "game"
+path = "src/game_bin.rs"
+
 [dependencies]
 restgine_core.workspace = true
 restgine_ecs.workspace = true
