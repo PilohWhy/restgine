@@ -1,14 +1,38 @@
 use glam::{Mat4, Quat, Vec3, Vec3A};
-use hecs::World;
-use restgine_core::{ThreadScratchpad, Transform3D};
-use restgine_ecs::{Footprint, RigidBodyXPBD, Velocity3D};
-use restgine_physics::step_xpbd_substep;
+use restgine_core::ThreadScratchpad;
 use restgine_render::{
     Camera3D, Mesh3DInstanceRaw, Mesh3DPipeline, SpriteInstanceRaw, SpritePipeline, WindowContext,
 };
 use std::time::Instant;
-use winit::event::{ElementState, Event, KeyEvent, WindowEvent};
+use winit::event::{DeviceEvent, ElementState, Event, KeyEvent, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::window::CursorGrabMode;
+
+// AABB for block collision
+#[derive(Clone, Copy)]
+struct BlockAABB {
+    min: Vec3,
+    max: Vec3,
+    color: [f32; 4],
+}
+
+impl BlockAABB {
+    fn new(center: Vec3, size: Vec3, color: [f32; 4]) -> Self {
+        let half = size * 0.5;
+        Self {
+            min: center - half,
+            max: center + half,
+            color,
+        }
+    }
+
+    fn to_instance(self) -> Mesh3DInstanceRaw {
+        let center = (self.min + self.max) * 0.5;
+        let size = self.max - self.min;
+        let model = Mat4::from_scale_rotation_translation(size, Quat::IDENTITY, center);
+        Mesh3DInstanceRaw::new(model, self.color)
+    }
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::Builder::from_env(
@@ -16,9 +40,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )
     .init();
 
-    // 1. Initialize Native Window with uncapped GPU surface
+    // 1. Initialize Window with uncapped GPU surface
     let mut window_ctx = WindowContext::new(
-        "Restgine 3D Game | Pure Rust | Vulkan / DirectX 12",
+        "Restgine 3D — First-Person Walkaround | Vulkan Uncapped",
         1280,
         720,
     )?;
@@ -33,114 +57,154 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let window = window_ctx.window.clone();
     let mut config = window_ctx.config;
 
-    // 2. Initialize 3D Mesh pipeline with Reversed-Z depth testing
+    // Grab cursor for seamless first-person mouse look
+    let _ = window
+        .set_cursor_grab(CursorGrabMode::Locked)
+        .or_else(|_| window.set_cursor_grab(CursorGrabMode::Confined));
+    window.set_cursor_visible(false);
+
+    // 2. Pipelines
     let mut mesh3d_pipeline =
         Mesh3DPipeline::new(device, config.format, config.width, config.height);
-
-    // 3. Initialize 2D Sprite pipeline for On-Screen HUD Overlay
     let hud_pipeline = SpritePipeline::new(device, config.format);
 
-    // 4. Populate 3D Simulation World
-    let mut world = World::new();
+    // 3. World Setup: Plane and Static Blocks
+    let mut blocks: Vec<BlockAABB> = Vec::new();
 
-    // Spawn 3D Player entity
-    let player = world.spawn((
-        Transform3D {
-            translation: Vec3A::new(0.0, 1.0, 0.0),
-            rotation: Quat::IDENTITY,
-            scale: Vec3A::new(2.0, 2.0, 2.0),
-            previous_translation: Vec3A::new(0.0, 1.0, 0.0),
-        },
-        Velocity3D {
-            linear: Vec3A::ZERO,
-            angular: Vec3::ZERO,
-        },
-        RigidBodyXPBD::dynamic(5.0),
-        Footprint::sphere(1.5),
+    // Large Ground Plane (120x120 tiles)
+    let ground = BlockAABB::new(
+        Vec3::new(0.0, -0.5, 0.0),
+        Vec3::new(140.0, 1.0, 140.0),
+        [0.08, 0.11, 0.16, 1.0], // Dark slate floor
+    );
+
+    // Stairs leading to a high platform
+    blocks.push(BlockAABB::new(
+        Vec3::new(0.0, 0.5, -8.0),
+        Vec3::new(4.0, 1.0, 3.0),
+        [0.15, 0.20, 0.28, 1.0],
+    ));
+    blocks.push(BlockAABB::new(
+        Vec3::new(0.0, 1.0, -11.0),
+        Vec3::new(4.0, 2.0, 3.0),
+        [0.18, 0.24, 0.34, 1.0],
+    ));
+    blocks.push(BlockAABB::new(
+        Vec3::new(0.0, 1.5, -14.0),
+        Vec3::new(4.0, 3.0, 3.0),
+        [0.22, 0.29, 0.40, 1.0],
+    ));
+    blocks.push(BlockAABB::new(
+        Vec3::new(0.0, 2.0, -18.0),
+        Vec3::new(8.0, 4.0, 5.0),
+        [0.25, 0.34, 0.46, 1.0],
+    )); // High platform
+
+    // Colorful feature blocks around the arena
+    blocks.push(BlockAABB::new(
+        Vec3::new(-10.0, 1.5, -6.0),
+        Vec3::new(3.0, 3.0, 3.0),
+        [0.06, 0.85, 0.55, 1.0],
+    )); // Emerald block
+    blocks.push(BlockAABB::new(
+        Vec3::new(12.0, 2.0, -4.0),
+        Vec3::new(4.0, 4.0, 4.0),
+        [0.96, 0.26, 0.42, 1.0],
+    )); // Ruby block
+    blocks.push(BlockAABB::new(
+        Vec3::new(8.0, 1.0, 10.0),
+        Vec3::new(2.5, 2.0, 2.5),
+        [0.23, 0.51, 0.96, 1.0],
+    )); // Sapphire block
+    blocks.push(BlockAABB::new(
+        Vec3::new(-12.0, 2.5, 8.0),
+        Vec3::new(3.0, 5.0, 3.0),
+        [0.96, 0.76, 0.20, 1.0],
+    )); // Amber monolith
+    blocks.push(BlockAABB::new(
+        Vec3::new(-6.0, 1.0, 14.0),
+        Vec3::new(3.0, 2.0, 3.0),
+        [0.72, 0.38, 0.94, 1.0],
+    )); // Amethyst block
+
+    // Perimeter boundary walls
+    blocks.push(BlockAABB::new(
+        Vec3::new(0.0, 2.0, -70.0),
+        Vec3::new(140.0, 4.0, 2.0),
+        [0.06, 0.72, 0.50, 0.9],
+    ));
+    blocks.push(BlockAABB::new(
+        Vec3::new(0.0, 2.0, 70.0),
+        Vec3::new(140.0, 4.0, 2.0),
+        [0.06, 0.72, 0.50, 0.9],
+    ));
+    blocks.push(BlockAABB::new(
+        Vec3::new(-70.0, 2.0, 0.0),
+        Vec3::new(2.0, 4.0, 140.0),
+        [0.06, 0.72, 0.50, 0.9],
+    ));
+    blocks.push(BlockAABB::new(
+        Vec3::new(70.0, 2.0, 0.0),
+        Vec3::new(2.0, 4.0, 140.0),
+        [0.06, 0.72, 0.50, 0.9],
     ));
 
-    // Spawn 40+ 3D Bouncing Cubes with diverse candy colors and angular velocities
-    let palette: [[f32; 4]; 7] = [
-        [0.96, 0.26, 0.42, 1.0], // Ruby red
-        [0.23, 0.51, 0.96, 1.0], // Sapphire blue
-        [0.10, 0.82, 0.61, 1.0], // Emerald green
-        [0.96, 0.76, 0.20, 1.0], // Amber gold
-        [0.72, 0.38, 0.94, 1.0], // Amethyst purple
-        [0.06, 0.85, 0.91, 1.0], // Cyan
-        [0.98, 0.55, 0.24, 1.0], // Coral orange
-    ];
+    // 4. First-Person Player State
+    let mut player_pos = Vec3::new(0.0, 1.7, 5.0); // Eye level at 1.7m
+    let mut player_vel_y = 0.0f32;
+    let mut is_grounded = true;
+    let player_radius = 0.45f32;
+    let player_height = 1.75f32;
 
-    let mut cube_colors: Vec<[f32; 4]> = Vec::new();
+    // First-person camera angles (radians)
+    let mut cam_yaw = 0.0f32; // Horizontal rotation
+    let mut cam_pitch = 0.0f32; // Vertical pitch
 
-    for i in 0..42 {
-        let fi = i as f32;
-        let ring = (i / 7) as f32 + 1.0;
-        let angle = (i % 7) as f32 * (std::f32::consts::TAU / 7.0) + ring * 0.4;
-        let dist = ring * 18.0;
+    let mouse_sensitivity = 0.0022f32;
+    let move_speed = 10.0f32; // Meters per second (consistent regardless of FPS!)
+    let jump_impulse = 9.5f32;
+    let gravity = 26.0f32;
 
-        let x = angle.cos() * dist;
-        let y = 8.0 + (i % 6) as f32 * 4.0;
-        let z = angle.sin() * dist;
-
-        let scale = 1.2 + (i % 4) as f32 * 0.4;
-        let color = palette[i % palette.len()];
-        cube_colors.push(color);
-
-        world.spawn((
-            Transform3D {
-                translation: Vec3A::new(x, y, z),
-                rotation: Quat::from_rotation_y(angle),
-                scale: Vec3A::splat(scale),
-                previous_translation: Vec3A::new(x, y, z),
-            },
-            Velocity3D {
-                linear: Vec3A::new(
-                    (fi - 21.0) * 0.8,
-                    12.0 + (i % 5) as f32 * 3.0,
-                    (i as f32 % 5.0) * 2.0,
-                ),
-                angular: Vec3::new(
-                    1.2 + (i % 3) as f32 * 0.5,
-                    0.8 + (i % 4) as f32 * 0.4,
-                    1.5 - (i % 2) as f32 * 0.8,
-                ),
-            },
-            RigidBodyXPBD::dynamic(1.5),
-            Footprint::sphere(scale),
-        ));
-    }
-
-    // 5. 3D Camera with 3rd-person follow and orbit
-    let mut camera = Camera3D::new(
-        Vec3::new(0.0, 35.0, 55.0),
-        Vec3::new(0.0, 2.0, 0.0),
-        config.width as f32 / config.height as f32,
-    );
-    let mut cam_yaw = 0.0f32;
-    let cam_distance = 65.0f32;
-
-    // Controls state
+    // Controls
     let mut key_w = false;
     let mut key_s = false;
     let mut key_a = false;
     let mut key_d = false;
     let mut key_space = false;
-    let mut key_q = false;
-    let mut key_e = false;
+    let mut key_shift = false;
+    let mut cursor_locked = true;
 
-    let dt = 1.0 / 120.0;
-    let mut frame_count = 0u64;
+    // Camera setup
+    let mut camera = Camera3D::new(
+        player_pos,
+        player_pos + Vec3::new(0.0, 0.0, -1.0),
+        config.width as f32 / config.height as f32,
+    );
+
+    // Delta time tracker for frame-rate independent physics
+    let mut last_frame_instant = Instant::now();
     let mut last_fps_update = Instant::now();
+    let mut frame_count = 0u64;
     let mut current_fps = 0.0f32;
     let mut frame_time_ms = 0.0f32;
 
-    let mut mesh_instances: Vec<Mesh3DInstanceRaw> = Vec::with_capacity(128);
-    let mut hud_instances: Vec<SpriteInstanceRaw> = Vec::with_capacity(64);
-
+    let mut mesh_instances: Vec<Mesh3DInstanceRaw> = Vec::with_capacity(64);
+    let mut hud_instances: Vec<SpriteInstanceRaw> = Vec::with_capacity(32);
     let scratchpad = ThreadScratchpad::new();
 
     event_loop.run(move |event, elwt| {
         match event {
+            // Raw mouse motion for 1st person camera
+            Event::DeviceEvent {
+                event: DeviceEvent::MouseMotion { delta: (dx, dy) },
+                ..
+            } if cursor_locked => {
+                cam_yaw += dx as f32 * mouse_sensitivity;
+                cam_pitch -= dy as f32 * mouse_sensitivity;
+                // Clamp pitch so you don't flip upside down (-88° to +88°)
+                cam_pitch = cam_pitch.clamp(-1.53, 1.53);
+            }
+
             Event::WindowEvent { event, window_id } if window_id == window.id() => match event {
                 WindowEvent::CloseRequested => elwt.exit(),
                 WindowEvent::Resized(new_size) => {
@@ -149,6 +213,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     surface.configure(device, &config);
                     mesh3d_pipeline.resize(device, config.width, config.height);
                     camera.set_aspect_ratio(config.width, config.height);
+                }
+                WindowEvent::MouseInput { state: ElementState::Pressed, .. } => {
+                    if !cursor_locked {
+                        cursor_locked = true;
+                        let _ = window.set_cursor_grab(CursorGrabMode::Locked)
+                            .or_else(|_| window.set_cursor_grab(CursorGrabMode::Confined));
+                        window.set_cursor_visible(false);
+                    }
                 }
                 WindowEvent::KeyboardInput {
                     event:
@@ -161,191 +233,118 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 } => {
                     let is_pressed = state == ElementState::Pressed;
                     match key_code {
-                        KeyCode::Escape => elwt.exit(),
-                        KeyCode::KeyW | KeyCode::ArrowUp => key_w = is_pressed,
-                        KeyCode::KeyS | KeyCode::ArrowDown => key_s = is_pressed,
-                        KeyCode::KeyA | KeyCode::ArrowLeft => key_a = is_pressed,
-                        KeyCode::KeyD | KeyCode::ArrowRight => key_d = is_pressed,
+                        KeyCode::Escape => {
+                            if cursor_locked {
+                                cursor_locked = false;
+                                let _ = window.set_cursor_grab(CursorGrabMode::None);
+                                window.set_cursor_visible(true);
+                            } else {
+                                elwt.exit();
+                            }
+                        }
+                        KeyCode::KeyW => key_w = is_pressed,
+                        KeyCode::KeyS => key_s = is_pressed,
+                        KeyCode::KeyA => key_a = is_pressed,
+                        KeyCode::KeyD => key_d = is_pressed,
                         KeyCode::Space => key_space = is_pressed,
-                        KeyCode::KeyQ => key_q = is_pressed,
-                        KeyCode::KeyE => key_e = is_pressed,
+                        KeyCode::ShiftLeft | KeyCode::ShiftRight => key_shift = is_pressed,
                         _ => {}
                     }
                 }
                 WindowEvent::RedrawRequested => {
                     scratchpad.reset();
 
-                    // --- CAMERA ROTATION ---
-                    if key_q {
-                        cam_yaw += 2.0 * dt;
-                    }
-                    if key_e {
-                        cam_yaw -= 2.0 * dt;
-                    }
+                    // --- FRAME-RATE INDEPENDENT DELTA TIME ---
+                    let now = Instant::now();
+                    let dt = now.duration_since(last_frame_instant).as_secs_f32().clamp(0.0001, 0.05);
+                    last_frame_instant = now;
 
-                    // --- PLAYER INPUT & 3D MOVEMENT ---
-                    let forward = Vec3A::new(-cam_yaw.sin(), 0.0, -cam_yaw.cos());
-                    let right = Vec3A::new(cam_yaw.cos(), 0.0, -cam_yaw.sin());
-                    let mut move_dir = Vec3A::ZERO;
+                    // --- FIRST-PERSON MOVEMENT CALCULATION ---
+                    let forward = Vec3::new(cam_yaw.sin(), 0.0, -cam_yaw.cos());
+                    let right = Vec3::new(cam_yaw.cos(), 0.0, cam_yaw.sin());
 
+                    let mut wish_dir = Vec3::ZERO;
                     if key_w {
-                        move_dir += forward;
+                        wish_dir += forward;
                     }
                     if key_s {
-                        move_dir -= forward;
-                    }
-                    if key_a {
-                        move_dir -= right;
+                        wish_dir -= forward;
                     }
                     if key_d {
-                        move_dir += right;
+                        wish_dir += right;
+                    }
+                    if key_a {
+                        wish_dir -= right;
                     }
 
-                    let mut player_pos = Vec3A::ZERO;
+                    let speed = if key_shift { move_speed * 1.6 } else { move_speed };
 
-                    if let Ok(mut trans) = world.get::<&mut Transform3D>(player) {
-                        if let Ok(mut vel) = world.get::<&mut Velocity3D>(player) {
-                            let speed = 40.0;
-                            if move_dir.length_squared() > 0.0 {
-                                let norm = move_dir.normalize();
-                                vel.linear.x = norm.x * speed;
-                                vel.linear.z = norm.z * speed;
-                            } else {
-                                vel.linear.x *= 0.85;
-                                vel.linear.z *= 0.85;
-                            }
+                    if wish_dir.length_squared() > 0.0 {
+                        wish_dir = wish_dir.normalize();
+                        let horizontal_move = wish_dir * speed * dt;
 
-                            // Jump impulse
-                            if key_space && trans.translation.y <= 1.05 {
-                                vel.linear.y = 22.0;
-                            }
-
-                            // Apply gravity to player
-                            vel.linear.y -= 45.0 * dt;
-                            trans.translation += vel.linear * dt;
-
-                            // Floor collision
-                            if trans.translation.y <= 1.0 {
-                                trans.translation.y = 1.0;
-                                vel.linear.y = 0.0;
-                            }
-
-                            // Arena boundaries
-                            trans.translation.x = trans.translation.x.clamp(-75.0, 75.0);
-                            trans.translation.z = trans.translation.z.clamp(-75.0, 75.0);
-
-                            player_pos = trans.translation;
+                        // Collision step for X
+                        let new_x = player_pos.x + horizontal_move.x;
+                        if !check_player_collision(Vec3::new(new_x, player_pos.y, player_pos.z), player_radius, player_height, &blocks) {
+                            player_pos.x = new_x;
+                        }
+                        // Collision step for Z
+                        let new_z = player_pos.z + horizontal_move.z;
+                        if !check_player_collision(Vec3::new(player_pos.x, player_pos.y, new_z), player_radius, player_height, &blocks) {
+                            player_pos.z = new_z;
                         }
                     }
 
-                    // --- CAMERA FOLLOW ---
-                    let cam_offset = Vec3A::new(
-                        cam_yaw.sin() * cam_distance,
-                        32.0,
-                        cam_yaw.cos() * cam_distance,
-                    );
-                    camera.eye = player_pos + cam_offset;
-                    camera.target = player_pos + Vec3A::new(0.0, 2.0, 0.0);
-
-                    // --- XPBD PHYSICS SIMULATION FOR BOUNCING 3D CUBES ---
-                    step_xpbd_substep(&mut world, dt, 4, false);
-
-                    // Ground bounces and 3D rotational spins
-                    for (_, (trans, vel)) in
-                        world.query_mut::<(&mut Transform3D, &mut Velocity3D)>()
-                    {
-                        // Gravity
-                        vel.linear.y -= 38.0 * dt;
-                        trans.translation += vel.linear * dt;
-
-                        // 3D rotation update
-                        let ang_speed = vel.angular.length();
-                        if ang_speed > 0.001 {
-                            let rot_axis = vel.angular / ang_speed;
-                            let delta_rot = Quat::from_axis_angle(rot_axis, ang_speed * dt);
-                            trans.rotation = (delta_rot * trans.rotation).normalize();
-                        }
-
-                        // Floor bounce with high elasticity
-                        let half_h = trans.scale.y * 0.5;
-                        if trans.translation.y <= half_h {
-                            trans.translation.y = half_h;
-                            vel.linear.y = -vel.linear.y * 0.88; // Bouncy
-                            vel.linear.x += (rand_simple(trans.translation.x) - 0.5) * 2.0;
-                            vel.linear.z += (rand_simple(trans.translation.z) - 0.5) * 2.0;
-                        }
-
-                        // Wall bounces
-                        if trans.translation.x.abs() > 75.0 {
-                            vel.linear.x = -vel.linear.x * 0.9;
-                            trans.translation.x = trans.translation.x.clamp(-75.0, 75.0);
-                        }
-                        if trans.translation.z.abs() > 75.0 {
-                            vel.linear.z = -vel.linear.z * 0.9;
-                            trans.translation.z = trans.translation.z.clamp(-75.0, 75.0);
-                        }
+                    // --- VERTICAL JUMP & GRAVITY ---
+                    if key_space && is_grounded {
+                        player_vel_y = jump_impulse;
+                        is_grounded = false;
                     }
 
-                    // --- ASSEMBLE 3D INSTANCES ---
+                    player_vel_y -= gravity * dt;
+                    let new_y = player_pos.y + player_vel_y * dt;
+
+                    // Check floor collision & top of blocks
+                    let ground_y = get_ground_height_under_player(player_pos, player_radius, &blocks);
+                    if new_y <= ground_y + player_height {
+                        player_pos.y = ground_y + player_height;
+                        player_vel_y = 0.0;
+                        is_grounded = true;
+                    } else {
+                        player_pos.y = new_y;
+                        is_grounded = false;
+                    }
+
+                    // Arena bounds clamping
+                    player_pos.x = player_pos.x.clamp(-68.0, 68.0);
+                    player_pos.z = player_pos.z.clamp(-68.0, 68.0);
+
+                    // --- FIRST-PERSON CAMERA UPDATE ---
+                    // Camera looks where pitch and yaw point
+                    let look_dir = Vec3::new(
+                        cam_pitch.cos() * cam_yaw.sin(),
+                        cam_pitch.sin(),
+                        cam_pitch.cos() * -cam_yaw.cos(),
+                    ).normalize();
+
+                    camera.eye = Vec3A::from(player_pos);
+                    camera.target = Vec3A::from(player_pos + look_dir);
+
+                    // --- ASSEMBLE 3D MESHES TO RENDER ---
                     mesh_instances.clear();
 
-                    // 1. 3D Ground Floor (wide dark slate tiles)
-                    let floor_mat = Mat4::from_scale_rotation_translation(
-                        Vec3::new(160.0, 0.5, 160.0),
-                        Quat::IDENTITY,
-                        Vec3::new(0.0, -0.25, 0.0),
-                    );
-                    mesh_instances.push(Mesh3DInstanceRaw::new(
-                        floor_mat,
-                        [0.08, 0.11, 0.16, 1.0], // Dark slate
-                    ));
+                    // 1. Ground Plane
+                    mesh_instances.push(ground.to_instance());
 
-                    // 2. Perimeter Pillars
-                    for px in &[-78.0, 78.0] {
-                        for pz in &[-78.0, 78.0] {
-                            let pillar_mat = Mat4::from_scale_rotation_translation(
-                                Vec3::new(3.0, 16.0, 3.0),
-                                Quat::IDENTITY,
-                                Vec3::new(*px, 8.0, *pz),
-                            );
-                            mesh_instances.push(Mesh3DInstanceRaw::new(
-                                pillar_mat,
-                                [0.06, 0.72, 0.50, 1.0], // Emerald accents
-                            ));
-                        }
+                    // 2. All 3D Blocks & Stairs
+                    for block in &blocks {
+                        mesh_instances.push(block.to_instance());
                     }
 
-                    // 3. Player 3D Mesh (bright emerald cube)
-                    if let Ok(trans) = world.get::<&Transform3D>(player) {
-                        mesh_instances.push(Mesh3DInstanceRaw::new(
-                            trans.to_mat4(),
-                            [0.06, 0.85, 0.55, 1.0], // Emerald player
-                        ));
-                    }
-
-                    // 4. 40+ Bouncing Candy Cubes
-                    let mut color_idx = 0;
-                    for (entity, trans) in world.query::<&Transform3D>().iter() {
-                        if entity != player {
-                            let color = if color_idx < cube_colors.len() {
-                                cube_colors[color_idx]
-                            } else {
-                                [0.9, 0.5, 0.2, 1.0]
-                            };
-                            mesh_instances.push(Mesh3DInstanceRaw::new(trans.to_mat4(), color));
-                            color_idx += 1;
-                        }
-                    }
-
-                    // Update 3D Camera Uniforms
+                    // Upload Camera & Instances to GPU
                     let view_proj = camera.view_proj_matrix();
-                    let light_dir = Vec3::new(0.6, 1.0, 0.45).normalize();
-                    mesh3d_pipeline.update_camera(
-                        queue,
-                        view_proj,
-                        Vec3::from(camera.eye),
-                        light_dir,
-                    );
+                    let sun_dir = Vec3::new(0.5, 0.9, 0.35).normalize();
+                    mesh3d_pipeline.update_camera(queue, view_proj, player_pos, sun_dir);
 
                     queue.write_buffer(
                         &mesh3d_pipeline.instance_buffer,
@@ -358,56 +357,54 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let screen_w = config.width as f32;
                     let screen_h = config.height as f32;
 
-                    // HUD Container Card (Top-Left corner)
+                    // 1. Top-Left FPS & Performance HUD Card
                     hud_instances.push(SpriteInstanceRaw {
-                        position: [16.0, screen_h - 130.0],
-                        size: [280.0, 114.0],
+                        position: [16.0, screen_h - 110.0],
+                        size: [280.0, 94.0],
                         uv_min: [0.0, 0.0],
                         uv_max: [1.0, 1.0],
-                        color_tint: [0.06, 0.09, 0.15, 0.88], // Translucent slate-900
+                        color_tint: [0.06, 0.09, 0.15, 0.88], // Dark slate translucent
                     });
-
-                    // HUD Card Top Border Accent (Emerald)
                     hud_instances.push(SpriteInstanceRaw {
                         position: [16.0, screen_h - 18.0],
                         size: [280.0, 3.0],
                         uv_min: [0.0, 0.0],
                         uv_max: [1.0, 1.0],
-                        color_tint: [0.06, 0.72, 0.50, 1.0],
+                        color_tint: [0.06, 0.72, 0.50, 1.0], // Emerald accent
                     });
 
-                    // Live FPS Pill / Badge
-                    let fps_color = if current_fps >= 2000.0 {
-                        [0.06, 0.85, 0.55, 1.0] // Emerald green
+                    // Live FPS color badge
+                    let fps_badge_color = if current_fps >= 1000.0 {
+                        [0.06, 0.85, 0.55, 1.0] // Emerald (>1k FPS)
                     } else if current_fps >= 144.0 {
-                        [0.23, 0.71, 0.96, 1.0] // Bright blue
+                        [0.23, 0.71, 0.96, 1.0] // Blue
                     } else {
                         [0.96, 0.76, 0.20, 1.0] // Amber
                     };
 
                     hud_instances.push(SpriteInstanceRaw {
                         position: [26.0, screen_h - 48.0],
-                        size: [120.0, 22.0],
+                        size: [110.0, 20.0],
                         uv_min: [0.0, 0.0],
                         uv_max: [1.0, 1.0],
-                        color_tint: fps_color,
+                        color_tint: fps_badge_color,
                     });
 
-                    // FPS bar visualizer (relative performance meter)
-                    let fps_ratio = (current_fps / 5000.0).clamp(0.05, 1.0);
+                    // Rolling FPS meter bar
+                    let fps_meter = (current_fps / 5000.0).clamp(0.04, 1.0);
                     hud_instances.push(SpriteInstanceRaw {
                         position: [26.0, screen_h - 60.0],
-                        size: [260.0 * fps_ratio, 6.0],
+                        size: [260.0 * fps_meter, 6.0],
                         uv_min: [0.0, 0.0],
                         uv_max: [1.0, 1.0],
                         color_tint: [0.06, 0.72, 0.50, 0.9],
                     });
 
-                    // Frametime latency indicator bar (< 1ms = emerald green)
-                    let latency_ratio = (frame_time_ms / 16.66).clamp(0.02, 1.0);
+                    // Latency bar (<1ms = emerald)
+                    let latency_meter = (frame_time_ms / 16.66).clamp(0.02, 1.0);
                     hud_instances.push(SpriteInstanceRaw {
-                        position: [26.0, screen_h - 74.0],
-                        size: [260.0 * latency_ratio, 4.0],
+                        position: [26.0, screen_h - 72.0],
+                        size: [260.0 * latency_meter, 4.0],
                         uv_min: [0.0, 0.0],
                         uv_max: [1.0, 1.0],
                         color_tint: if frame_time_ms < 1.0 {
@@ -417,23 +414,44 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         },
                     });
 
-                    // Controls helper bar at screen bottom
+                    // 2. Crosshair in the exact center of screen
+                    let cx = screen_w * 0.5;
+                    let cy = screen_h * 0.5;
+                    let cross_color = [1.0, 1.0, 1.0, 0.85];
+                    // Horizontal tick
                     hud_instances.push(SpriteInstanceRaw {
-                        position: [16.0, 16.0],
-                        size: [520.0, 32.0],
+                        position: [cx - 8.0, cy - 1.0],
+                        size: [16.0, 2.0],
                         uv_min: [0.0, 0.0],
                         uv_max: [1.0, 1.0],
-                        color_tint: [0.06, 0.09, 0.15, 0.82],
+                        color_tint: cross_color,
+                    });
+                    // Vertical tick
+                    hud_instances.push(SpriteInstanceRaw {
+                        position: [cx - 1.0, cy - 8.0],
+                        size: [2.0, 16.0],
+                        uv_min: [0.0, 0.0],
+                        uv_max: [1.0, 1.0],
+                        color_tint: cross_color,
+                    });
+
+                    // 3. Controls helper at bottom of screen
+                    hud_instances.push(SpriteInstanceRaw {
+                        position: [16.0, 16.0],
+                        size: [560.0, 32.0],
+                        uv_min: [0.0, 0.0],
+                        uv_max: [1.0, 1.0],
+                        color_tint: [0.06, 0.09, 0.15, 0.85],
                     });
                     hud_instances.push(SpriteInstanceRaw {
                         position: [16.0, 46.0],
-                        size: [520.0, 2.0],
+                        size: [560.0, 2.0],
                         uv_min: [0.0, 0.0],
                         uv_max: [1.0, 1.0],
                         color_tint: [0.06, 0.72, 0.50, 0.8],
                     });
 
-                    // Update HUD Orthographic Projection (Screen Space 0,0 at bottom-left)
+                    // Update HUD Projection
                     let hud_proj = Mat4::orthographic_rh(0.0, screen_w, 0.0, screen_h, -1.0, 1.0);
                     hud_pipeline.update_camera(queue, hud_proj);
 
@@ -443,7 +461,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         bytemuck::cast_slice(&hud_instances),
                     );
 
-                    // --- RENDER PASSES VIA WGPU ---
+                    // --- DRAW FRAME VIA WGPU ---
                     if let Ok(output) = surface.get_current_texture() {
                         let view = output
                             .texture
@@ -451,14 +469,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                         let mut encoder =
                             device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                                label: Some("Game 3D Encoder"),
+                                label: Some("3D First-Person Encoder"),
                             });
 
-                        // PASS 1: 3D Scene Rasterization with Depth Buffer
+                        // PASS 1: 3D First-Person Scene
                         {
                             let mut render_pass =
                                 encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                                    label: Some("3D Game Render Pass"),
+                                    label: Some("3D World Pass"),
                                     color_attachments: &[Some(
                                         wgpu::RenderPassColorAttachment {
                                             view: &view,
@@ -478,7 +496,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         wgpu::RenderPassDepthStencilAttachment {
                                             view: &mesh3d_pipeline.depth_view,
                                             depth_ops: Some(wgpu::Operations {
-                                                load: wgpu::LoadOp::Clear(0.0), // Reversed-Z far plane
+                                                load: wgpu::LoadOp::Clear(0.0), // Reversed-Z
                                                 store: wgpu::StoreOp::Store,
                                             }),
                                             stencil_ops: None,
@@ -509,17 +527,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             );
                         }
 
-                        // PASS 2: 2D On-Screen HUD Overlay (FPS Indicator)
+                        // PASS 2: 2D On-Screen HUD Overlay & Crosshair
                         {
                             let mut hud_pass =
                                 encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                                    label: Some("HUD Overlay Pass"),
+                                    label: Some("HUD & Crosshair Pass"),
                                     color_attachments: &[Some(
                                         wgpu::RenderPassColorAttachment {
                                             view: &view,
                                             resolve_target: None,
                                             ops: wgpu::Operations {
-                                                load: wgpu::LoadOp::Load, // Preserve 3D scene
+                                                load: wgpu::LoadOp::Load,
                                                 store: wgpu::StoreOp::Store,
                                             },
                                         },
@@ -559,7 +577,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         current_fps = frame_count as f32 / elapsed_sec;
                         frame_time_ms = 1000.0 / current_fps.max(1.0);
                         let title = format!(
-                            "Restgine 3D Game | FPS: {:.1} ({:.2} ms) | 43 Entities | XPBD 3D Physics | Vulkan Uncapped",
+                            "Restgine 3D FPP | FPS: {:.1} ({:.2} ms) | Vulkan Uncapped | DeltaTime-Locked Speed | Pure Rust",
                             current_fps, frame_time_ms
                         );
                         window.set_title(&title);
@@ -581,7 +599,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn rand_simple(seed: f32) -> f32 {
-    let x = (seed * 12.9898 + 78.233).sin() * 43_758.547_f32;
-    x - x.floor()
+fn check_player_collision(pos: Vec3, radius: f32, height: f32, blocks: &[BlockAABB]) -> bool {
+    let p_min = Vec3::new(pos.x - radius, pos.y - height + 0.1, pos.z - radius);
+    let p_max = Vec3::new(pos.x + radius, pos.y, pos.z + radius);
+
+    for b in blocks {
+        if p_min.x < b.max.x
+            && p_max.x > b.min.x
+            && p_min.y < b.max.y
+            && p_max.y > b.min.y
+            && p_min.z < b.max.z
+            && p_max.z > b.min.z
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn get_ground_height_under_player(pos: Vec3, radius: f32, blocks: &[BlockAABB]) -> f32 {
+    let mut max_y = 0.0f32; // Floor plane is at Y=0
+    let p_min_x = pos.x - radius;
+    let p_max_x = pos.x + radius;
+    let p_min_z = pos.z - radius;
+    let p_max_z = pos.z + radius;
+
+    for b in blocks {
+        if p_min_x < b.max.x
+            && p_max_x > b.min.x
+            && p_min_z < b.max.z
+            && p_max_z > b.min.z
+            && b.max.y <= pos.y + 0.2
+        {
+            // Under or near feet
+            if b.max.y > max_y {
+                max_y = b.max.y;
+            }
+        }
+    }
+    max_y
 }
