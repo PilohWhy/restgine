@@ -43,9 +43,55 @@ fn vs_main(@builtin(vertex_index) in_vertex_index: u32) -> VertexOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    var scene_color = textureSample(t_scene, s_linear, in.uv).rgb;
+    let post_tier = camera.quality_tiers.w;
+
+    // ------------------------------------------------------------------------
+    // 0. CHROMATIC ABERRATION (Screen-Edge Lens Dispersion on High & Epic)
+    // ------------------------------------------------------------------------
+    var uv_r = in.uv;
+    var uv_b = in.uv;
+    if (post_tier >= 2u) {
+        let ca_strength = select(0.0035, 0.0075, post_tier >= 3u);
+        let ca_dir = in.uv - vec2<f32>(0.5, 0.5);
+        let ca_dist = dot(ca_dir, ca_dir);
+        let ca_offset = ca_dir * (ca_dist * ca_strength);
+        uv_r = in.uv + ca_offset;
+        uv_b = in.uv - ca_offset;
+    }
+
+    var scene_color = vec3<f32>(
+        textureSample(t_scene, s_linear, uv_r).r,
+        textureSample(t_scene, s_linear, in.uv).g,
+        textureSample(t_scene, s_linear, uv_b).b
+    );
+
     let raw_depth = textureSample(t_depth, s_nearest, in.uv);
     let is_sky = raw_depth <= 0.00002;
+
+    // ------------------------------------------------------------------------
+    // 1. SCREEN-SPACE AMBIENT OCCLUSION (SSAO - Deep Contact Darkening)
+    // ------------------------------------------------------------------------
+    let gi_tier = camera.quality_tiers.y;
+    if (gi_tier >= 2u && !is_sky) {
+        var occlusion: f32 = 0.0;
+        let sample_rad = select(0.014, 0.024, gi_tier >= 3u);
+        let kernel_samples: u32 = select(4u, 8u, gi_tier >= 3u);
+        let inv_kernel = 1.0 / f32(kernel_samples);
+
+        for (var k: u32 = 0u; k < kernel_samples; k = k + 1u) {
+            let angle = f32(k) * 2.3999632; // Golden angle
+            let r = sqrt(f32(k) + 0.5) * inv_kernel * sample_rad;
+            let offset_uv = in.uv + vec2<f32>(cos(angle), sin(angle)) * r;
+            let sample_d = textureSample(t_depth, s_nearest, offset_uv);
+            // In Reversed-Z, closer geometry has LARGER depth value
+            let diff = sample_d - raw_depth;
+            if (diff > 0.0003 && diff < 0.05) {
+                occlusion += (1.0 - diff / 0.05);
+            }
+        }
+        let ao_darkening = clamp(1.0 - (occlusion * inv_kernel) * select(1.3, 2.0, gi_tier >= 3u), 0.20, 1.0);
+        scene_color *= ao_darkening;
+    }
 
     // Reconstruct world ray and world position from Reversed-Z depth
     let clip_pos = vec4<f32>(in.screen_pos.x, in.screen_pos.y, raw_depth, 1.0);
@@ -55,18 +101,18 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let ray_vec = world_pos - camera.camera_pos.xyz;
     let total_dist = select(length(ray_vec), 140.0, is_sky);
     let ray_dir = normalize(ray_vec);
-    let max_march_dist = min(total_dist, 55.0);
+    let max_march_dist = min(total_dist, 60.0);
 
     // ------------------------------------------------------------------------
-    // 1. VOLUMETRIC FOG & FLASHLIGHT GOD RAYS (Effects Tier)
+    // 2. VOLUMETRIC FOG & FLASHLIGHT GOD RAYS (Effects Tier)
     // ------------------------------------------------------------------------
     let effects_tier = camera.quality_extra.x;
     if (effects_tier > 0u) {
         var steps: u32 = 10u;
         if (effects_tier == 2u) {
-            steps = 18u;
+            steps = 22u;
         } else if (effects_tier >= 3u) {
-            steps = 28u;
+            steps = 34u;
         }
 
         // Screen-space dither hash to eliminate raymarch banding
@@ -76,44 +122,49 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         var accum_light = vec3<f32>(0.0);
         var extinction: f32 = 1.0;
 
+        let moon_dir = normalize(camera.light_dir.xyz);
+        let moon_cos = max(dot(-ray_dir, moon_dir), 0.0);
+        let moon_mie = pow(moon_cos, 16.0) * 0.45 + 0.06;
+
         for (var i: u32 = 0u; i < steps; i = i + 1u) {
-            if (march_t >= max_march_dist || extinction <= 0.03) {
+            if (march_t >= max_march_dist || extinction <= 0.02) {
                 break;
             }
             let p = camera.camera_pos.xyz + ray_dir * march_t;
 
-            // Ground Mist Layer (drifting low-lying height fog between 0m and 3.5m)
+            // Ground Mist Layer (drifting low-lying height fog between 0m and 4.0m)
             let ground_y = p.y;
-            let height_density = clamp(exp(-ground_y * 0.25) * 0.035, 0.0, 0.045);
+            let mist_density = clamp(exp(-ground_y * 0.22) * select(0.025, 0.055, effects_tier >= 3u), 0.0, 0.07);
 
-            // Flashlight Volumetric Beam
+            // Flashlight Volumetric God Rays
             var flash_scatter: f32 = 0.0;
             if (camera.flashlight_pos.w > 0.5) {
                 let to_light = p - camera.flashlight_pos.xyz;
                 let l_dist = length(to_light);
-                if (l_dist < 48.0) {
+                if (l_dist < 52.0) {
                     let l_dir = to_light / max(l_dist, 0.001);
                     let cos_angle = dot(l_dir, camera.flashlight_dir.xyz);
-                    let cos_outer = 0.84; // ~32 deg
+                    let cos_outer = 0.83; // ~34 deg cone
                     let cos_inner = 0.94; // ~20 deg hotspot
                     let spot = clamp((cos_angle - cos_outer) / (cos_inner - cos_outer), 0.0, 1.0);
                     if (spot > 0.0) {
-                        let atten = 1.0 / (1.0 + 0.08 * l_dist + 0.018 * l_dist * l_dist);
+                        let atten = 1.0 / (1.0 + 0.07 * l_dist + 0.015 * l_dist * l_dist);
                         // Forward Mie scattering phase function
                         let cos_view = dot(-ray_dir, l_dir);
-                        let g = 0.62;
-                        let mie = (1.0 - g * g) / pow(1.0 + g * g - 2.0 * g * cos_view, 1.5) * 0.25;
-                        flash_scatter = spot * spot * atten * mie * camera.flashlight_dir.w * 4.6;
+                        let g = select(0.60, 0.74, effects_tier >= 3u);
+                        let mie = (1.0 - g * g) / pow(1.0 + g * g - 2.0 * g * cos_view, 1.5) * 0.35;
+                        let intensity = select(4.0, 6.8, effects_tier >= 3u);
+                        flash_scatter = spot * spot * atten * mie * camera.flashlight_dir.w * intensity;
                     }
                 }
             }
 
-            let step_extinction = exp(-(height_density + flash_scatter * 0.40) * step_size);
+            let step_extinction = exp(-(mist_density + flash_scatter * 0.35) * step_size);
             extinction *= step_extinction;
 
-            let flash_color = vec3<f32>(1.0, 0.98, 0.90);
-            let mist_color = vec3<f32>(0.04, 0.08, 0.16);
-            let step_inscatter = (flash_scatter * flash_color + height_density * mist_color) * step_size;
+            let flash_color = vec3<f32>(1.0, 0.97, 0.88);
+            let mist_color = vec3<f32>(0.05, 0.09, 0.18) * (1.0 + moon_mie * 1.5);
+            let step_inscatter = (flash_scatter * flash_color + mist_density * mist_color) * step_size;
             accum_light += step_inscatter * (1.0 - step_extinction);
 
             march_t += step_size;
@@ -123,36 +174,48 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     // ------------------------------------------------------------------------
-    // 2. BLOOM & HIGHLIGHT HALO (Post-Processing Tier)
+    // 3. MULTI-TAP CINEMATIC BLOOM (Post-Processing Tier)
     // ------------------------------------------------------------------------
-    let post_tier = camera.quality_tiers.w;
-    if (post_tier >= 2u) {
-        let luma = dot(scene_color, vec3<f32>(0.2126, 0.7152, 0.0722));
-        let bloom_threshold = 0.82;
-        let bloom_factor = clamp((luma - bloom_threshold) / 0.45, 0.0, 1.0);
+    if (post_tier >= 1u) {
+        let bloom_thresh = select(0.85, select(0.70, 0.55, post_tier >= 3u), post_tier >= 2u);
+        let bloom_intensity = select(0.20, select(0.45, 0.85, post_tier >= 3u), post_tier >= 2u);
+
+        let b0 = textureSample(t_scene, s_linear, in.uv + vec2<f32>(-0.003, -0.003)).rgb;
+        let b1 = textureSample(t_scene, s_linear, in.uv + vec2<f32>( 0.003, -0.003)).rgb;
+        let b2 = textureSample(t_scene, s_linear, in.uv + vec2<f32>(-0.003,  0.003)).rgb;
+        let b3 = textureSample(t_scene, s_linear, in.uv + vec2<f32>( 0.003,  0.003)).rgb;
+
+        var bloom_accum = max(b0 - vec3<f32>(bloom_thresh), vec3<f32>(0.0)) +
+                          max(b1 - vec3<f32>(bloom_thresh), vec3<f32>(0.0)) +
+                          max(b2 - vec3<f32>(bloom_thresh), vec3<f32>(0.0)) +
+                          max(b3 - vec3<f32>(bloom_thresh), vec3<f32>(0.0));
+        bloom_accum *= 0.25;
+
         let bloom_tint = select(vec3<f32>(0.85, 0.92, 1.0), vec3<f32>(1.0, 0.97, 0.90), camera.flashlight_pos.w > 0.5);
-        scene_color += scene_color * bloom_factor * bloom_factor * 0.42 * bloom_tint;
+        scene_color += bloom_accum * bloom_intensity * bloom_tint;
     }
 
     // ------------------------------------------------------------------------
-    // 3. VIGNETTE & CINEMATIC EDGES
+    // 4. VIGNETTE & HORROR ATMOSPHERE
     // ------------------------------------------------------------------------
     if (post_tier >= 1u) {
         let dist_center = length(in.screen_pos * vec2<f32>(0.48, 0.62));
-        let vignette = clamp(1.0 - dist_center * dist_center * 0.54, 0.0, 1.0);
-        scene_color *= (vignette * 0.86 + 0.14);
+        let vig_power = select(0.35, select(0.60, 0.85, post_tier >= 3u), post_tier >= 2u);
+        let vignette = clamp(1.0 - dist_center * dist_center * vig_power, 0.0, 1.0);
+        scene_color *= (vignette * 0.88 + 0.12);
     }
 
     // ------------------------------------------------------------------------
-    // 4. ANALOG 35MM FILM GRAIN
+    // 5. ANALOG 35MM FILM GRAIN
     // ------------------------------------------------------------------------
     if (post_tier >= 2u) {
+        let grain_amount = select(0.015, 0.026, post_tier >= 3u);
         let grain = fract(sin(dot(in.uv * 1920.0, vec2<f32>(12.9898, 78.233)) + camera.settings.y * 36.0) * 43758.5453);
-        scene_color += (grain - 0.5) * 0.016;
+        scene_color += (grain - 0.5) * grain_amount;
     }
 
     // ------------------------------------------------------------------------
-    // 5. ACES TONEMAPPING & GAMMA CORRECTION
+    // 6. ACES TONEMAPPING & GAMMA CORRECTION
     // ------------------------------------------------------------------------
     let a: f32 = 2.51;
     let b: f32 = 0.03;

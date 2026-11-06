@@ -175,14 +175,21 @@ fn fs_bark(in: VertexOutput) -> @location(0) vec4<f32> {
     // Directional Shadow PCF sampling
     var shadow: f32 = 1.0;
     let shadow_tier = camera.quality_tiers.x;
-    if (shadow_tier > 0u && in.shadow_pos.x >= 0.0 && in.shadow_pos.x <= 1.0 && in.shadow_pos.y >= 0.0 && in.shadow_pos.y <= 1.0 && in.shadow_pos.z >= 0.0 && in.shadow_pos.z <= 1.0) {
+    if (in.shadow_pos.x >= 0.0 && in.shadow_pos.x <= 1.0 && in.shadow_pos.y >= 0.0 && in.shadow_pos.y <= 1.0 && in.shadow_pos.z >= 0.0 && in.shadow_pos.z <= 1.0) {
         let texel_size = 1.0 / 2048.0;
         let bias = 0.003;
         let shadow_depth = in.shadow_pos.z - bias;
 
-        if (shadow_tier == 1u) {
+        if (shadow_tier == 0u) {
             shadow = textureSampleCompare(t_shadow, s_shadow, in.shadow_pos.xy, shadow_depth);
-        } else {
+        } else if (shadow_tier == 1u) {
+            shadow = (
+                textureSampleCompare(t_shadow, s_shadow, in.shadow_pos.xy + vec2<f32>(-texel_size, -texel_size), shadow_depth) +
+                textureSampleCompare(t_shadow, s_shadow, in.shadow_pos.xy + vec2<f32>( texel_size, -texel_size), shadow_depth) +
+                textureSampleCompare(t_shadow, s_shadow, in.shadow_pos.xy + vec2<f32>(-texel_size,  texel_size), shadow_depth) +
+                textureSampleCompare(t_shadow, s_shadow, in.shadow_pos.xy + vec2<f32>( texel_size,  texel_size), shadow_depth)
+            ) * 0.25;
+        } else if (shadow_tier == 2u) {
             var sum: f32 = 0.0;
             for (var y = -1; y <= 1; y++) {
                 for (var x = -1; x <= 1; x++) {
@@ -191,6 +198,23 @@ fn fs_bark(in: VertexOutput) -> @location(0) vec4<f32> {
                 }
             }
             shadow = sum / 9.0;
+        } else {
+            var poisson = array<vec2<f32>, 16>(
+                vec2<f32>(-0.94201624, -0.39906216), vec2<f32>( 0.94558609, -0.76890725),
+                vec2<f32>(-0.09418410, -0.92938870), vec2<f32>( 0.34495938,  0.29387760),
+                vec2<f32>(-0.91588581,  0.45771432), vec2<f32>(-0.81544232, -0.87912464),
+                vec2<f32>(-0.38277543,  0.27676845), vec2<f32>( 0.97484398,  0.75648379),
+                vec2<f32>( 0.44323325, -0.97511554), vec2<f32>( 0.53742981, -0.47373420),
+                vec2<f32>(-0.26496911, -0.41893023), vec2<f32>( 0.79197514,  0.19090188),
+                vec2<f32>(-0.24188840,  0.99706507), vec2<f32>(-0.81409955,  0.91437590),
+                vec2<f32>( 0.19984126,  0.78641367), vec2<f32>( 0.14383161, -0.14100790)
+            );
+            var sum: f32 = 0.0;
+            let spread = texel_size * 2.2;
+            for (var i = 0; i < 16; i = i + 1) {
+                sum += textureSampleCompare(t_shadow, s_shadow, in.shadow_pos.xy + poisson[i] * spread, shadow_depth);
+            }
+            shadow = sum * 0.0625;
         }
     }
 
@@ -301,14 +325,21 @@ fn fs_leaf(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @location
     // Directional Shadow PCF sampling
     var shadow: f32 = 1.0;
     let shadow_tier = camera.quality_tiers.x;
-    if (shadow_tier > 0u && in.shadow_pos.x >= 0.0 && in.shadow_pos.x <= 1.0 && in.shadow_pos.y >= 0.0 && in.shadow_pos.y <= 1.0 && in.shadow_pos.z >= 0.0 && in.shadow_pos.z <= 1.0) {
+    if (in.shadow_pos.x >= 0.0 && in.shadow_pos.x <= 1.0 && in.shadow_pos.y >= 0.0 && in.shadow_pos.y <= 1.0 && in.shadow_pos.z >= 0.0 && in.shadow_pos.z <= 1.0) {
         let texel_size = 1.0 / 2048.0;
         let bias = 0.003;
         let shadow_depth = in.shadow_pos.z - bias;
 
-        if (shadow_tier == 1u) {
+        if (shadow_tier == 0u) {
             shadow = textureSampleCompare(t_shadow, s_shadow, in.shadow_pos.xy, shadow_depth);
-        } else {
+        } else if (shadow_tier == 1u) {
+            shadow = (
+                textureSampleCompare(t_shadow, s_shadow, in.shadow_pos.xy + vec2<f32>(-texel_size, -texel_size), shadow_depth) +
+                textureSampleCompare(t_shadow, s_shadow, in.shadow_pos.xy + vec2<f32>( texel_size, -texel_size), shadow_depth) +
+                textureSampleCompare(t_shadow, s_shadow, in.shadow_pos.xy + vec2<f32>(-texel_size,  texel_size), shadow_depth) +
+                textureSampleCompare(t_shadow, s_shadow, in.shadow_pos.xy + vec2<f32>( texel_size,  texel_size), shadow_depth)
+            ) * 0.25;
+        } else if (shadow_tier == 2u) {
             var sum: f32 = 0.0;
             for (var y = -1; y <= 1; y++) {
                 for (var x = -1; x <= 1; x++) {
@@ -317,6 +348,23 @@ fn fs_leaf(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @location
                 }
             }
             shadow = sum / 9.0;
+        } else {
+            var poisson = array<vec2<f32>, 16>(
+                vec2<f32>(-0.94201624, -0.39906216), vec2<f32>( 0.94558609, -0.76890725),
+                vec2<f32>(-0.09418410, -0.92938870), vec2<f32>( 0.34495938,  0.29387760),
+                vec2<f32>(-0.91588581,  0.45771432), vec2<f32>(-0.81544232, -0.87912464),
+                vec2<f32>(-0.38277543,  0.27676845), vec2<f32>( 0.97484398,  0.75648379),
+                vec2<f32>( 0.44323325, -0.97511554), vec2<f32>( 0.53742981, -0.47373420),
+                vec2<f32>(-0.26496911, -0.41893023), vec2<f32>( 0.79197514,  0.19090188),
+                vec2<f32>(-0.24188840,  0.99706507), vec2<f32>(-0.81409955,  0.91437590),
+                vec2<f32>( 0.19984126,  0.78641367), vec2<f32>( 0.14383161, -0.14100790)
+            );
+            var sum: f32 = 0.0;
+            let spread = texel_size * 2.2;
+            for (var i = 0; i < 16; i = i + 1) {
+                sum += textureSampleCompare(t_shadow, s_shadow, in.shadow_pos.xy + poisson[i] * spread, shadow_depth);
+            }
+            shadow = sum * 0.0625;
         }
     }
 
