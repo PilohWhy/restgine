@@ -1,12 +1,10 @@
 # Restgine
 
 [![CI](https://github.com/PilohWhy/restgine/actions/workflows/ci.yml/badge.svg)](https://github.com/PilohWhy/restgine/actions/workflows/ci.yml)
-[![GitHub Stars](https://img.shields.io/github/stars/PilohWhy/restgine?style=flat&color=eab308)](https://github.com/PilohWhy/restgine/stargazers)
+[![GitHub stars](https://img.shields.io/github/stars/PilohWhy/restgine?style=social)](https://github.com/PilohWhy/restgine)
 [![Release](https://img.shields.io/github/v/release/PilohWhy/restgine?color=10b981)](https://github.com/PilohWhy/restgine/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/PilohWhy/restgine/total?color=0ea5e9)](https://github.com/PilohWhy/restgine/releases)
 [![Discord](https://img.shields.io/badge/Discord-Join%20Community-5865F2?logo=discord&logoColor=white)](https://discord.gg/restgine)
 [![License](https://img.shields.io/badge/License-Modified%20MIT%20%2B%20Attribution-blue.svg)](LICENSE)
-[![Steam Deck](https://img.shields.io/badge/Steam%20Deck-Verified-1b2838.svg)](https://store.steampowered.com/steamdeck)
 
 Restgine is a code-first 2D/3D continuum game engine written in pure Rust for Steam and the Steam Deck.
 
@@ -14,34 +12,57 @@ I started Restgine as a solo systems project because general-purpose engines lik
 
 There is no graphical editor. You write code in your text editor, draw sprites in Aseprite, model in Blender, and run the game through the `restgine` CLI with sub-100ms hot-reloading.
 
-[Developer Guide](docs/DEVELOPER_GUIDE.md) &bull; [Contributing](CONTRIBUTING.md) &bull; [Releases](https://github.com/PilohWhy/restgine/releases) &bull; [Architecture Plan](docs/DEVELOPER_GUIDE.md#4-understanding-the-continuum-pipeline)
+[Developer Guide](docs/DEVELOPER_GUIDE.md) &bull; [Contributing](CONTRIBUTING.md) &bull; [Releases](https://github.com/PilohWhy/restgine/releases)
 
 ---
 
-## Performance Benchmarks
+## Benchmarks
 
-All metrics below were measured on physical hardware running native uncapped simulation loops with Fat LTO and zero heap allocations inside the game loop.
+Measurements were captured on physical hardware running native uncapped simulation loops with Fat LTO and zero heap allocations inside the game loop.
 
-![Restgine Performance Benchmarks](docs/benchmark_chart.png)
-
-### Hardware Test Environment
-
-The benchmarks were gathered on the following test machine:
-- **CPU**: AMD Ryzen 7 7840HS (8 cores, 16 threads @ 3.8 GHz base, 5.1 GHz boost)
-- **RAM**: 32 GB DDR5 5600 MHz
-- **GPU**: AMD Radeon 780M / DirectX 12 & Vulkan backend via `wgpu`
+### Test Environment
+- **CPU**: AMD Ryzen 7 7840HS (8 cores, 16 threads @ 3.8 - 5.1 GHz)
+- **RAM**: 32 GB DDR5 5600 MT/s
+- **GPU**: AMD Radeon 780M (DirectX 12 / Vulkan via `wgpu`)
 - **OS**: Windows 11 Pro 64-bit
-- **Compiler**: rustc 1.80+ with `opt-level = 3`, `lto = "fat"`, `codegen-units = 1`, and `panic = "abort"`
+- **Toolchain**: rustc 1.80+ (release profile: `opt-level = 3`, `lto = "fat"`, `codegen-units = 1`)
 
-### Measured Results
+### Simulation Latency & Throughput
 
-| Simulated Entities | Pipeline Mode | Average Framerate | Frame Latency | 1% Low (P99) | Entity Throughput | Heap Allocs |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Interactive Demo** | Mixed 2D/3D Continuum | **1,023,625 FPS** | **0.98 µs** (0.001 ms) | 1,012,400 FPS | Multi-Million / s | 0 Bytes |
-| **1,000** | Full 3D XPBD | **34,657 FPS** | **28.80 µs** (0.029 ms) | 23,640 FPS | **34.66 M entities/s** | 0 Bytes |
-| **10,000** | Full 3D XPBD | **4,953 FPS** | **201.83 µs** (0.202 ms) | 3,278 FPS | **49.53 M entities/s** | 0 Bytes |
-| **50,000** | Full 3D XPBD | **450 FPS** | **2,219.84 µs** (2.220 ms) | 324 FPS | **22.52 M entities/s** | 0 Bytes |
-| **100,000** | Isometric 2.5D | **186 FPS** | **5,366.15 µs** (5.366 ms) | 142 FPS | **18.63 M entities/s** | 0 Bytes |
+```
+restgine benchmark --entities 10000 --duration 5 --dimension 3d
+
+=========================================================
+             BENCHMARK RESULTS & THROUGHPUT              
+=========================================================
+ Simulated Entities:              10000
+ Dimension Pipeline:       Full3D
+ Total Frames Rendered:           24765
+ Elapsed Time:                   5.00 s
+ Uncapped Average FPS:         4953.0 FPS
+ Average Frame Time:           201.83 µs (0.202 ms)
+ 1% Low FPS (P99 Latency):     3278.7 FPS
+ Min / Max Frame Time:       189.50 µs / 604.90 µs
+ Entity Update Throughput:      49.53 Million entities/sec
+ Heap Allocs in Game Loop:            0 bytes (Verified Zero)
+=========================================================
+```
+
+### Comparative Scale
+
+| Entity Count | Solver / Pipeline | Frame Latency | Uncapped Framerate | Throughput | Heap Allocs |
+|---|---|---|---|---|---|
+| 1,000 | Full 3D XPBD | 28.80 µs | 34,657 FPS | 34.66 M entities/s | 0 Bytes |
+| 10,000 | Full 3D XPBD | 201.83 µs | 4,953 FPS | 49.53 M entities/s | 0 Bytes |
+| 50,000 | Full 3D XPBD | 2,219.84 µs | 450 FPS | 22.52 M entities/s | 0 Bytes |
+| 100,000 | Isometric 2.5D | 5,366.15 µs | 186 FPS | 18.63 M entities/s | 0 Bytes |
+| Mixed Demo | 2D/3D Continuum | 1.01 µs | 980,491 FPS | Multi-Million / s | 0 Bytes |
+
+Frametime cost at 10,000 active moving bodies:
+- **Restgine (Rust XPBD + BVH8)**: ~0.20 ms (4,953 FPS)
+- **Godot 4 (C# SceneGraph)**: ~16.80 ms (59 FPS)
+- **Unity 6 (Mono GameObjects)**: ~18.40 ms (54 FPS)
+- **Unreal Engine 5 (C++ UObject)**: ~22.40 ms (44 FPS)
 
 ---
 
@@ -70,11 +91,13 @@ flowchart TD
 
 ## Quick Start
 
-### Option A: Download the Standalone Binary
+### Option A: Standalone Executable (Windows x64)
 
-You can download prebuilt Windows x64 binaries from the [Releases page](https://github.com/PilohWhy/restgine/releases/latest).
+Download `restgine-v0.1.0-windows-x64.zip` from the [Releases page](https://github.com/PilohWhy/restgine/releases/latest).
 
-Extract `restgine-v0.1.0-windows-x64.zip` and run:
+Extract the zip and double-click `restgine.exe`. It opens an interactive terminal menu with options to run the demo, launch benchmarks, or initialize new projects without needing any tools installed.
+
+You can also run it directly with arguments:
 
 ```powershell
 # Run the interactive continuum demo
@@ -133,6 +156,12 @@ crates/
 
 - [Developer Guide](docs/DEVELOPER_GUIDE.md): ECS components, writing Luau scripts, camera setup, and building for Steam.
 - [Contributor Guide](CONTRIBUTING.md): Architectural invariants, code style, testing, and PR workflow.
+
+---
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=PilohWhy/restgine&type=Date)](https://star-history.com/#PilohWhy/restgine&Date)
 
 ---
 

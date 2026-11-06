@@ -68,6 +68,12 @@ enum Commands {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+
+    // If run without arguments (e.g. double-clicked from file explorer)
+    if std::env::args().len() <= 1 {
+        return run_interactive_launcher();
+    }
+
     let cli = Cli::parse();
 
     match cli.command {
@@ -97,6 +103,57 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    Ok(())
+}
+
+fn run_interactive_launcher() -> Result<(), Box<dyn std::error::Error>> {
+    use std::io::Write;
+
+    println!("\x1b[1;36m=========================================================\x1b[0m");
+    println!("\x1b[1;36m                   RESTGINE CONTINUUM                    \x1b[0m");
+    println!("     High-Performance 2D/3D Game Engine for Steam        ");
+    println!("\x1b[1;36m=========================================================\x1b[0m\n");
+    println!("  [1] Launch Interactive Game Demo (Uncapped FPS)");
+    println!("  [2] Run Benchmark (10,000 Entities @ Uncapped Speed)");
+    println!("  [3] Run Heavy Stress Test (50,000 Entities)");
+    println!("  [4] Create New Project (restgine init)");
+    println!("  [5] Exit\n");
+    print!("Select an option [1-5] (default: 1): ");
+    let _ = std::io::stdout().flush();
+
+    let mut choice = String::new();
+    let _ = std::io::stdin().read_line(&mut choice);
+    let choice = choice.trim();
+
+    match choice {
+        "2" => {
+            benchmark::run_uncapped_benchmark(10000, 5, RenderDimension::Full3D);
+        }
+        "3" => {
+            benchmark::run_uncapped_benchmark(50000, 5, RenderDimension::Full3D);
+        }
+        "4" => {
+            print!("\nEnter project name: ");
+            let _ = std::io::stdout().flush();
+            let mut name = String::new();
+            let _ = std::io::stdin().read_line(&mut name);
+            let name = name.trim();
+            if !name.is_empty() {
+                init_project(name)?;
+            }
+        }
+        "5" | "q" | "exit" => {
+            return Ok(());
+        }
+        _ => {
+            println!("\nLaunching Interactive Continuum Demo (5s run)...\n");
+            demo::run_continuum_demo(5)?;
+        }
+    }
+
+    println!("\nPress Enter to exit...");
+    let mut exit_buf = String::new();
+    let _ = std::io::stdin().read_line(&mut exit_buf);
     Ok(())
 }
 
