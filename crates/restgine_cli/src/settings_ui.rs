@@ -933,9 +933,9 @@ pub fn render_text(
             let col = (glyph_idx % 16) as f32;
             let row = (glyph_idx / 16) as f32;
 
-            // In our texture coordinates, (0,0) is top-left in texture, but let's map UV properly
-            let uv_min = [col / 16.0, row / 16.0];
-            let uv_max = [(col + 1.0) / 16.0, (row + 1.0) / 16.0];
+            // Flip Y so the top of the glyph texture (V=row/16.0) maps to the top of the quad
+            let uv_min = [col / 16.0, (row + 1.0) / 16.0];
+            let uv_max = [(col + 1.0) / 16.0, row / 16.0];
 
             instances.push(SpriteInstanceRaw {
                 position: [cur_x, start_y],
@@ -998,6 +998,10 @@ fn get_glyph_pattern(code: u8) -> [u8; 7] {
         b'>' => [0x08, 0x04, 0x02, 0x01, 0x02, 0x04, 0x08],
         b'(' => [0x02, 0x04, 0x08, 0x08, 0x08, 0x04, 0x02],
         b')' => [0x08, 0x04, 0x02, 0x02, 0x02, 0x04, 0x08],
+        b'|' => [0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04],
+        b'*' => [0x00, 0x04, 0x15, 0x0E, 0x15, 0x04, 0x00],
+        b',' => [0x00, 0x00, 0x00, 0x00, 0x0C, 0x0C, 0x08],
+        b'_' => [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1F],
         _ => [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
     }
 }

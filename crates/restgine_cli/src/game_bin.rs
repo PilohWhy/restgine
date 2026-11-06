@@ -204,8 +204,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut last_fps_update = Instant::now();
     let mut frame_count = 0u64;
-    let mut current_fps = 0.0f32;
-    let mut frame_time_ms = 0.0f32;
+    let mut current_fps = 60.0f32;
+    let mut frame_time_ms = 16.6f32;
 
     let mut mesh_instances: Vec<Mesh3DInstanceRaw> = Vec::with_capacity(64);
     let mut hud_instances: Vec<SpriteInstanceRaw> = Vec::with_capacity(512);
@@ -456,64 +456,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let screen_w = config.width as f32;
                     let screen_h = config.height as f32;
 
-                    // 1. Top-Left FPS & Performance HUD Card
-                    hud_instances.push(SpriteInstanceRaw {
-                        position: [16.0, screen_h - 110.0],
-                        size: [280.0, 94.0],
-                        uv_min: [0.0, 0.0],
-                        uv_max: [1.0 / 128.0, 1.0 / 128.0],
-                        color_tint: [0.06, 0.09, 0.15, 0.88], // Dark slate translucent
-                    });
-                    hud_instances.push(SpriteInstanceRaw {
-                        position: [16.0, screen_h - 18.0],
-                        size: [280.0, 3.0],
-                        uv_min: [0.0, 0.0],
-                        uv_max: [1.0 / 128.0, 1.0 / 128.0],
-                        color_tint: [0.06, 0.85, 0.55, 1.0], // Emerald accent
-                    });
-
-                    // Live FPS color badge
-                    let fps_badge_color = if current_fps >= 1000.0 {
-                        [0.06, 0.85, 0.55, 1.0] // Emerald (>1k FPS)
-                    } else if current_fps >= 144.0 {
-                        [0.23, 0.71, 0.96, 1.0] // Blue
-                    } else {
-                        [0.96, 0.76, 0.20, 1.0] // Amber
-                    };
-
-                    hud_instances.push(SpriteInstanceRaw {
-                        position: [26.0, screen_h - 48.0],
-                        size: [110.0, 20.0],
-                        uv_min: [0.0, 0.0],
-                        uv_max: [1.0 / 128.0, 1.0 / 128.0],
-                        color_tint: fps_badge_color,
-                    });
-
-                    // Rolling FPS meter bar
-                    let fps_meter = (current_fps / 5000.0).clamp(0.04, 1.0);
-                    hud_instances.push(SpriteInstanceRaw {
-                        position: [26.0, screen_h - 60.0],
-                        size: [260.0 * fps_meter, 6.0],
-                        uv_min: [0.0, 0.0],
-                        uv_max: [1.0 / 128.0, 1.0 / 128.0],
-                        color_tint: [0.06, 0.72, 0.50, 0.9],
-                    });
-
-                    // Latency bar (<1ms = emerald)
-                    let latency_meter = (frame_time_ms / 16.66).clamp(0.02, 1.0);
-                    hud_instances.push(SpriteInstanceRaw {
-                        position: [26.0, screen_h - 72.0],
-                        size: [260.0 * latency_meter, 4.0],
-                        uv_min: [0.0, 0.0],
-                        uv_max: [1.0 / 128.0, 1.0 / 128.0],
-                        color_tint: if frame_time_ms < 1.0 {
-                            [0.06, 0.85, 0.55, 0.95]
-                        } else {
-                            [0.23, 0.71, 0.96, 0.95]
-                        },
-                    });
-
-                    // 2. Crosshair in the exact center of screen (only when menu is closed)
+                    // 1. In-game Crosshair & Controls Helper (when menu is closed)
                     if !settings_ui.is_open {
                         let cx = screen_w * 0.5;
                         let cy = screen_h * 0.5;
@@ -559,11 +502,96 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         );
                     }
 
-                    // 3. Taffy-powered ESC Settings Menu Overlay (if open)
+                    // 2. Taffy-powered ESC Settings Menu Overlay (if open)
                     settings_ui.build_instances(
                         screen_w,
                         screen_h,
                         &settings,
+                        &mut hud_instances,
+                    );
+
+                    // 3. Top-Left FPS & Performance HUD Card (always rendered on top, never hidden)
+                    let hud_w = 168.0;
+                    let hud_h = 62.0;
+                    let hud_x = 16.0;
+                    let hud_y = screen_h - hud_h - 16.0;
+
+                    // Dark background card
+                    hud_instances.push(SpriteInstanceRaw {
+                        position: [hud_x, hud_y],
+                        size: [hud_w, hud_h],
+                        uv_min: [0.0, 0.0],
+                        uv_max: [1.0 / 128.0, 1.0 / 128.0],
+                        color_tint: [0.05, 0.08, 0.13, 0.94],
+                    });
+                    // Emerald top stripe
+                    hud_instances.push(SpriteInstanceRaw {
+                        position: [hud_x, hud_y + hud_h - 2.0],
+                        size: [hud_w, 2.0],
+                        uv_min: [0.0, 0.0],
+                        uv_max: [1.0 / 128.0, 1.0 / 128.0],
+                        color_tint: [0.06, 0.85, 0.55, 1.0],
+                    });
+
+                    // Live FPS color calculation
+                    let fps_color = if current_fps >= 1000.0 {
+                        [0.06, 0.95, 0.60, 1.0] // Emerald (>1k FPS)
+                    } else if current_fps >= 144.0 {
+                        [0.25, 0.80, 1.0, 1.0] // Blue
+                    } else {
+                        [0.98, 0.80, 0.25, 1.0] // Amber
+                    };
+
+                    // Large live FPS readout
+                    let fps_str = format!("FPS: {:.0}", current_fps);
+                    settings_ui::render_text(
+                        &fps_str,
+                        hud_x + 10.0,
+                        hud_y + 36.0,
+                        9.0,
+                        11.0,
+                        fps_color,
+                        &mut hud_instances,
+                    );
+
+                    // Frame latency in milliseconds
+                    let ms_str = format!("{:.2} MS", frame_time_ms);
+                    settings_ui::render_text(
+                        &ms_str,
+                        hud_x + 94.0,
+                        hud_y + 37.0,
+                        8.0,
+                        9.0,
+                        [0.72, 0.80, 0.92, 1.0],
+                        &mut hud_instances,
+                    );
+
+                    // Rolling meter bar
+                    let bar_w = hud_w - 20.0;
+                    let meter_pct = (current_fps / 3000.0).clamp(0.04, 1.0);
+                    hud_instances.push(SpriteInstanceRaw {
+                        position: [hud_x + 10.0, hud_y + 22.0],
+                        size: [bar_w, 4.0],
+                        uv_min: [0.0, 0.0],
+                        uv_max: [1.0 / 128.0, 1.0 / 128.0],
+                        color_tint: [0.10, 0.15, 0.22, 1.0],
+                    });
+                    hud_instances.push(SpriteInstanceRaw {
+                        position: [hud_x + 10.0, hud_y + 22.0],
+                        size: [bar_w * meter_pct, 4.0],
+                        uv_min: [0.0, 0.0],
+                        uv_max: [1.0 / 128.0, 1.0 / 128.0],
+                        color_tint: fps_color,
+                    });
+
+                    // Sub-line: engine frequency & graphics API
+                    settings_ui::render_text(
+                        "60HZ * VULKAN 3D",
+                        hud_x + 10.0,
+                        hud_y + 7.0,
+                        7.0,
+                        8.0,
+                        [0.45, 0.55, 0.68, 1.0],
                         &mut hud_instances,
                     );
 
