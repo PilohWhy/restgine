@@ -1,43 +1,32 @@
 mod settings_ui;
 
-use glam::{Mat4, Quat, Vec3, Vec3A};
+use glam::{Mat4, Vec3, Vec3A};
 use restgine_core::time::GameClock;
 use restgine_core::ThreadScratchpad;
+use restgine_render::foliage::{scatter_chunk_grass, FoliagePipeline, GrassInstanceRaw};
 use restgine_render::mesh3d::CameraSettingsInput;
-use restgine_render::{
-    Camera3D, Mesh3DInstanceRaw, Mesh3DPipeline, SpriteInstanceRaw, SpritePipeline, WindowContext,
-};
-use settings_ui::{create_font_atlas_texture, GameSettings, SettingsUI};
+use restgine_render::terrain::{terrain_height, TerrainChunkInstance, TerrainPipeline};
+use restgine_render::{Camera3D, Mesh3DPipeline, SpriteInstanceRaw, SpritePipeline, WindowContext};
+use settings_ui::{create_font_atlas_texture, GameSettings, QualityTier, SettingsUI};
 use std::time::Instant;
 use winit::event::{DeviceEvent, ElementState, Event, KeyEvent, MouseButton, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::CursorGrabMode;
 
-// AABB for block collision
-#[derive(Clone, Copy)]
-struct BlockAABB {
-    min: Vec3,
-    max: Vec3,
-    color: [f32; 4],
-}
+// Embedded Ground Textures (Poliigon Patchy Grass 2K)
+const GROUND_ALBEDO_BYTES: &[u8] =
+    include_bytes!("../../../assets/textures/ground/Poliigon_GrassPatchyGround_4585_BaseColor.jpg");
+const GROUND_NORMAL_BYTES: &[u8] =
+    include_bytes!("../../../assets/textures/ground/Poliigon_GrassPatchyGround_4585_Normal.png");
+const GROUND_AO_ROUGH_BYTES: &[u8] =
+    include_bytes!("../../../assets/textures/ground/ground_ao_roughness.jpg");
 
-impl BlockAABB {
-    fn new(center: Vec3, size: Vec3, color: [f32; 4]) -> Self {
-        let half = size * 0.5;
-        Self {
-            min: center - half,
-            max: center + half,
-            color,
-        }
-    }
-
-    fn to_instance(self) -> Mesh3DInstanceRaw {
-        let center = (self.min + self.max) * 0.5;
-        let size = self.max - self.min;
-        let model = Mat4::from_scale_rotation_translation(size, Quat::IDENTITY, center);
-        Mesh3DInstanceRaw::new(model, self.color)
-    }
-}
+// Embedded 3D Grass Mesh Variants and Atlases
+const GRASS_VARIANTS_BIN: &[u8] = include_bytes!("../../../assets/models/grass/grass_variants.bin");
+const GRASS_ATLAS_ALBEDO_BYTES: &[u8] =
+    include_bytes!("../../../assets/models/grass/grass_atlas_albedo.png");
+const GRASS_ATLAS_NORMAL_BYTES: &[u8] =
+    include_bytes!("../../../assets/models/grass/grass_atlas_normal.png");
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::Builder::from_env(
@@ -47,7 +36,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 1. Initialize Window with uncapped GPU surface
     let mut window_ctx = WindowContext::new(
-        "Restgine 3D — First-Person Walkaround | Vulkan Uncapped",
+        "Restgine 3D — Procedural Infinite Grassland | Vulkan Uncapped",
         1280,
         720,
     )?;
@@ -73,106 +62,48 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .or_else(|_| window.set_cursor_grab(CursorGrabMode::Confined));
     window.set_cursor_visible(false);
 
-    // 2. Pipelines
+    // 2. Rendering Pipelines
     let mut mesh3d_pipeline =
         Mesh3DPipeline::new(device, config.format, config.width, config.height);
+
+    let terrain_pipeline = TerrainPipeline::new(
+        device,
+        queue,
+        config.format,
+        Mesh3DPipeline::DEPTH_FORMAT,
+        &mesh3d_pipeline.camera_bind_group_layout,
+        GROUND_ALBEDO_BYTES,
+        GROUND_NORMAL_BYTES,
+        GROUND_AO_ROUGH_BYTES,
+    )?;
+
+    let foliage_pipeline = FoliagePipeline::new(
+        device,
+        queue,
+        config.format,
+        Mesh3DPipeline::DEPTH_FORMAT,
+        &mesh3d_pipeline.camera_bind_group_layout,
+        GRASS_VARIANTS_BIN,
+        GRASS_ATLAS_ALBEDO_BYTES,
+        GRASS_ATLAS_NORMAL_BYTES,
+    )?;
+
     let hud_pipeline = SpritePipeline::new(device, config.format);
 
     // Create 128x128 Font & Solid Rect Atlas for zero-alloc UI
     let (_ui_texture, ui_bind_group) = create_font_atlas_texture(device, queue, &hud_pipeline);
 
-    // 3. World Setup: Plane and Static Blocks (Exact 0 background entities)
-    let mut blocks: Vec<BlockAABB> = Vec::new();
-
-    // Large Ground Plane (140x140 tiles)
-    let ground = BlockAABB::new(
-        Vec3::new(0.0, -0.5, 0.0),
-        Vec3::new(140.0, 1.0, 140.0),
-        [0.08, 0.11, 0.16, 1.0], // Dark slate floor
-    );
-
-    // Stairs leading to a high platform
-    blocks.push(BlockAABB::new(
-        Vec3::new(0.0, 0.5, -8.0),
-        Vec3::new(4.0, 1.0, 3.0),
-        [0.15, 0.20, 0.28, 1.0],
-    ));
-    blocks.push(BlockAABB::new(
-        Vec3::new(0.0, 1.0, -11.0),
-        Vec3::new(4.0, 2.0, 3.0),
-        [0.18, 0.24, 0.34, 1.0],
-    ));
-    blocks.push(BlockAABB::new(
-        Vec3::new(0.0, 1.5, -14.0),
-        Vec3::new(4.0, 3.0, 3.0),
-        [0.22, 0.29, 0.40, 1.0],
-    ));
-    blocks.push(BlockAABB::new(
-        Vec3::new(0.0, 2.0, -18.0),
-        Vec3::new(8.0, 4.0, 5.0),
-        [0.25, 0.34, 0.46, 1.0],
-    )); // High platform
-
-    // Colorful feature blocks around the arena
-    blocks.push(BlockAABB::new(
-        Vec3::new(-10.0, 1.5, -6.0),
-        Vec3::new(3.0, 3.0, 3.0),
-        [0.06, 0.85, 0.55, 1.0],
-    )); // Emerald block
-    blocks.push(BlockAABB::new(
-        Vec3::new(12.0, 2.0, -4.0),
-        Vec3::new(4.0, 4.0, 4.0),
-        [0.96, 0.26, 0.42, 1.0],
-    )); // Ruby block
-    blocks.push(BlockAABB::new(
-        Vec3::new(8.0, 1.0, 10.0),
-        Vec3::new(2.5, 2.0, 2.5),
-        [0.23, 0.51, 0.96, 1.0],
-    )); // Sapphire block
-    blocks.push(BlockAABB::new(
-        Vec3::new(-12.0, 2.5, 8.0),
-        Vec3::new(3.0, 5.0, 3.0),
-        [0.96, 0.76, 0.20, 1.0],
-    )); // Amber monolith
-    blocks.push(BlockAABB::new(
-        Vec3::new(-6.0, 1.0, 14.0),
-        Vec3::new(3.0, 2.0, 3.0),
-        [0.72, 0.38, 0.94, 1.0],
-    )); // Amethyst block
-
-    // Perimeter boundary walls
-    blocks.push(BlockAABB::new(
-        Vec3::new(0.0, 2.0, -70.0),
-        Vec3::new(140.0, 4.0, 2.0),
-        [0.06, 0.72, 0.50, 0.9],
-    ));
-    blocks.push(BlockAABB::new(
-        Vec3::new(0.0, 2.0, 70.0),
-        Vec3::new(140.0, 4.0, 2.0),
-        [0.06, 0.72, 0.50, 0.9],
-    ));
-    blocks.push(BlockAABB::new(
-        Vec3::new(-70.0, 2.0, 0.0),
-        Vec3::new(2.0, 4.0, 140.0),
-        [0.06, 0.72, 0.50, 0.9],
-    ));
-    blocks.push(BlockAABB::new(
-        Vec3::new(70.0, 2.0, 0.0),
-        Vec3::new(2.0, 4.0, 140.0),
-        [0.06, 0.72, 0.50, 0.9],
-    ));
-
-    // 4. First-Person Player State with 60Hz Physics Accumulator
-    let mut player_pos = Vec3::new(0.0, 1.7, 5.0); // Eye level at 1.7m
+    // 3. Player State with 60Hz Physics Accumulator
+    let player_height = 1.75f32;
+    let spawn_ground_y = terrain_height(0.0, 0.0);
+    let mut player_pos = Vec3::new(0.0, spawn_ground_y + player_height, 0.0);
     let mut prev_player_pos = player_pos;
     let mut player_vel_y = 0.0f32;
     let mut is_grounded = true;
-    let player_radius = 0.45f32;
-    let player_height = 1.75f32;
 
     // First-person camera angles (radians)
-    let mut cam_yaw = 0.0f32; // Horizontal rotation
-    let mut cam_pitch = 0.0f32; // Vertical pitch
+    let mut cam_yaw = 0.0f32;
+    let mut cam_pitch = 0.0f32;
 
     let mouse_sensitivity = 0.0022f32;
     let move_speed = 10.0f32; // Meters per second
@@ -201,13 +132,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 60Hz Fixed Timestep Clock for deterministic physics & sub-frame lerp
     let mut clock = GameClock::new(60);
+    let start_time = Instant::now();
 
     let mut last_fps_update = Instant::now();
     let mut frame_count = 0u64;
     let mut current_fps = 60.0f32;
     let mut frame_time_ms = 16.6f32;
 
-    let mut mesh_instances: Vec<Mesh3DInstanceRaw> = Vec::with_capacity(64);
+    let mut terrain_instances: Vec<TerrainChunkInstance> = Vec::with_capacity(256);
+    let num_grass_variants = foliage_pipeline.variant_ranges.len();
+    let mut grass_instances_by_variant: Vec<Vec<GrassInstanceRaw>> = (0..num_grass_variants)
+        .map(|_| Vec::with_capacity(FoliagePipeline::MAX_INSTANCES_PER_VARIANT))
+        .collect();
     let mut hud_instances: Vec<SpriteInstanceRaw> = Vec::with_capacity(512);
     let scratchpad = ThreadScratchpad::new();
 
@@ -333,27 +269,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             if wish_dir.length_squared() > 0.0 {
                                 wish_dir = wish_dir.normalize();
                                 let horizontal_move = wish_dir * speed * fixed_dt;
-
-                                // Collision step for X
-                                let new_x = player_pos.x + horizontal_move.x;
-                                if !check_player_collision(
-                                    Vec3::new(new_x, player_pos.y, player_pos.z),
-                                    player_radius,
-                                    player_height,
-                                    &blocks,
-                                ) {
-                                    player_pos.x = new_x;
-                                }
-                                // Collision step for Z
-                                let new_z = player_pos.z + horizontal_move.z;
-                                if !check_player_collision(
-                                    Vec3::new(player_pos.x, player_pos.y, new_z),
-                                    player_radius,
-                                    player_height,
-                                    &blocks,
-                                ) {
-                                    player_pos.z = new_z;
-                                }
+                                player_pos.x += horizontal_move.x;
+                                player_pos.z += horizontal_move.z;
                             }
 
                             // Vertical Jump & Gravity
@@ -365,12 +282,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             player_vel_y -= gravity * fixed_dt;
                             let new_y = player_pos.y + player_vel_y * fixed_dt;
 
-                            // Floor collision & top of blocks
-                            let ground_y = get_ground_height_under_player(
-                                player_pos,
-                                player_radius,
-                                &blocks,
-                            );
+                            // Ground height under player
+                            let ground_y = terrain_height(player_pos.x, player_pos.z);
                             if new_y <= ground_y + player_height {
                                 player_pos.y = ground_y + player_height;
                                 player_vel_y = 0.0;
@@ -379,10 +292,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 player_pos.y = new_y;
                                 is_grounded = false;
                             }
-
-                            // Arena bounds clamping
-                            player_pos.x = player_pos.x.clamp(-68.0, 68.0);
-                            player_pos.z = player_pos.z.clamp(-68.0, 68.0);
                         }
                     }
 
@@ -402,22 +311,75 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     camera.target = Vec3A::from(render_player_pos + look_dir);
                     camera.fov_y_rad = settings.fov.to_radians();
 
-                    // --- ASSEMBLE 3D MESHES TO RENDER ---
-                    mesh_instances.clear();
+                    // --- STREAM VISIBLE TERRAIN CHUNKS ---
+                    let chunk_size = TerrainPipeline::CHUNK_SIZE;
+                    let center_cx = (render_player_pos.x / chunk_size).floor() as i32;
+                    let center_cz = (render_player_pos.z / chunk_size).floor() as i32;
 
-                    // 1. Ground Plane
-                    mesh_instances.push(ground.to_instance());
+                    let chunk_radius = match settings.view_distance {
+                        QualityTier::Low => 2,
+                        QualityTier::Medium => 3,
+                        QualityTier::High => 4,
+                        QualityTier::Epic => 5,
+                    };
 
-                    // 2. All 3D Blocks & Stairs
-                    for block in &blocks {
-                        mesh_instances.push(block.to_instance());
+                    terrain_instances.clear();
+                    for cz in (center_cz - chunk_radius)..=(center_cz + chunk_radius) {
+                        for cx in (center_cx - chunk_radius)..=(center_cx + chunk_radius) {
+                            terrain_instances.push(TerrainChunkInstance {
+                                chunk_offset: [cx as f32 * chunk_size, cz as f32 * chunk_size],
+                                _padding: [0.0, 0.0],
+                            });
+                        }
+                    }
+                    queue.write_buffer(
+                        &terrain_pipeline.instance_buffer,
+                        0,
+                        bytemuck::cast_slice(&terrain_instances),
+                    );
+
+                    // --- STREAM DENSE 3D FOLIAGE AROUND PLAYER ---
+                    let clumps_per_chunk = match settings.foliage {
+                        QualityTier::Low => 60,
+                        QualityTier::Medium => 140,
+                        QualityTier::High => 260,
+                        QualityTier::Epic => 400,
+                    };
+                    let foliage_radius = match settings.foliage {
+                        QualityTier::Low => 1,
+                        QualityTier::Medium => 2,
+                        QualityTier::High => 2,
+                        QualityTier::Epic => 3,
+                    };
+
+                    for list in &mut grass_instances_by_variant {
+                        list.clear();
+                    }
+                    for cz in (center_cz - foliage_radius)..=(center_cz + foliage_radius) {
+                        for cx in (center_cx - foliage_radius)..=(center_cx + foliage_radius) {
+                            scatter_chunk_grass(
+                                cx,
+                                cz,
+                                clumps_per_chunk,
+                                num_grass_variants,
+                                &mut grass_instances_by_variant,
+                            );
+                        }
+                    }
+                    for (i, instances) in grass_instances_by_variant.iter().enumerate() {
+                        if !instances.is_empty() && i < foliage_pipeline.instance_buffers.len() {
+                            queue.write_buffer(
+                                &foliage_pipeline.instance_buffers[i],
+                                0,
+                                bytemuck::cast_slice(instances),
+                            );
+                        }
                     }
 
-                    // Upload Camera & Instances to GPU
+                    // Upload Camera & Dynamic Settings Uniforms to GPU
                     let view_proj = camera.view_proj_matrix();
                     let sun_dir = Vec3::new(0.5, 0.9, 0.35).normalize();
 
-                    // Directional Shadow Projection Matrix
                     let sun_pos = render_player_pos + sun_dir * 80.0;
                     let light_view = Mat4::look_at_rh(sun_pos, render_player_pos, Vec3::Y);
                     let ortho_size = 65.0;
@@ -431,25 +393,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     );
                     let light_view_proj = light_proj * light_view;
 
+                    let elapsed_time = start_time.elapsed().as_secs_f32();
                     let camera_input = CameraSettingsInput {
                         view_proj,
                         light_view_proj,
                         cam_pos: render_player_pos,
                         light_dir: sun_dir,
                         gamma: settings.gamma,
-                        motion_blur: settings.motion_blur,
+                        motion_blur: elapsed_time, // continuous time for live root-anchored wind sway
                         fov_rad: settings.fov.to_radians(),
                         view_dist: settings.view_distance_world(),
                         quality_tiers: settings.quality_tiers_u32(),
                         quality_extra: settings.quality_extra_u32(),
                     };
                     mesh3d_pipeline.update_camera(queue, &camera_input);
-
-                    queue.write_buffer(
-                        &mesh3d_pipeline.instance_buffer,
-                        0,
-                        bytemuck::cast_slice(&mesh_instances),
-                    );
 
                     // --- ASSEMBLE 2D ON-SCREEN HUD OVERLAY (FPS INDICATOR & SETTINGS MENU) ---
                     hud_instances.clear();
@@ -616,49 +573,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 label: Some("3D First-Person Encoder"),
                             });
 
-                        // PASS 0: Directional Shadow Pass
-                        {
-                            let mut shadow_pass =
-                                encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                                    label: Some("Directional Shadow Pass"),
-                                    color_attachments: &[],
-                                    depth_stencil_attachment: Some(
-                                        wgpu::RenderPassDepthStencilAttachment {
-                                            view: &mesh3d_pipeline.shadow_view,
-                                            depth_ops: Some(wgpu::Operations {
-                                                load: wgpu::LoadOp::Clear(1.0),
-                                                store: wgpu::StoreOp::Store,
-                                            }),
-                                            stencil_ops: None,
-                                        },
-                                    ),
-                                    occlusion_query_set: None,
-                                    timestamp_writes: None,
-                                });
-
-                            shadow_pass.set_pipeline(&mesh3d_pipeline.shadow_pipeline);
-                            shadow_pass
-                                .set_bind_group(0, &mesh3d_pipeline.shadow_camera_bind_group, &[]);
-                            shadow_pass.set_vertex_buffer(
-                                0,
-                                mesh3d_pipeline.cube_vertex_buffer.slice(..),
-                            );
-                            shadow_pass.set_vertex_buffer(
-                                1,
-                                mesh3d_pipeline.instance_buffer.slice(..),
-                            );
-                            shadow_pass.set_index_buffer(
-                                mesh3d_pipeline.cube_index_buffer.slice(..),
-                                wgpu::IndexFormat::Uint16,
-                            );
-                            shadow_pass.draw_indexed(
-                                0..mesh3d_pipeline.cube_index_count,
-                                0,
-                                0..mesh_instances.len() as u32,
-                            );
-                        }
-
-                        // PASS 1: 3D First-Person Scene with PBR and Dynamic Shadows
+                        // PASS 1: 3D Scene (Infinite Procedural Terrain & Dense Dynamic Foliage)
                         {
                             let mut render_pass =
                                 encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -692,27 +607,52 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     timestamp_writes: None,
                                 });
 
-                            render_pass.set_pipeline(&mesh3d_pipeline.pipeline);
-                            render_pass
-                                .set_bind_group(0, &mesh3d_pipeline.camera_bind_group, &[]);
-                            render_pass.set_bind_group(1, &mesh3d_pipeline.bone_bind_group, &[]);
+                            // 1A: Terrain Chunks with PBR and Normal Mapping
+                            render_pass.set_pipeline(&terrain_pipeline.pipeline);
+                            render_pass.set_bind_group(0, &mesh3d_pipeline.camera_bind_group, &[]);
+                            render_pass.set_bind_group(1, &terrain_pipeline.material_bind_group, &[]);
                             render_pass.set_vertex_buffer(
                                 0,
-                                mesh3d_pipeline.cube_vertex_buffer.slice(..),
+                                terrain_pipeline.chunk_mesh_vertex_buffer.slice(..),
                             );
                             render_pass.set_vertex_buffer(
                                 1,
-                                mesh3d_pipeline.instance_buffer.slice(..),
+                                terrain_pipeline.instance_buffer.slice(..),
                             );
                             render_pass.set_index_buffer(
-                                mesh3d_pipeline.cube_index_buffer.slice(..),
+                                terrain_pipeline.chunk_mesh_index_buffer.slice(..),
                                 wgpu::IndexFormat::Uint16,
                             );
                             render_pass.draw_indexed(
-                                0..mesh3d_pipeline.cube_index_count,
+                                0..terrain_pipeline.chunk_mesh_index_count,
                                 0,
-                                0..mesh_instances.len() as u32,
+                                0..terrain_instances.len() as u32,
                             );
+
+                            // 1B: Dense 3D Foliage with Wind Sway & Alpha Cutout
+                            render_pass.set_pipeline(&foliage_pipeline.pipeline);
+                            render_pass.set_bind_group(0, &mesh3d_pipeline.camera_bind_group, &[]);
+                            render_pass.set_bind_group(1, &foliage_pipeline.material_bind_group, &[]);
+                            render_pass.set_vertex_buffer(0, foliage_pipeline.vertex_buffer.slice(..));
+                            render_pass.set_index_buffer(
+                                foliage_pipeline.index_buffer.slice(..),
+                                wgpu::IndexFormat::Uint16,
+                            );
+
+                            for (variant_idx, range) in foliage_pipeline.variant_ranges.iter().enumerate() {
+                                let count = grass_instances_by_variant[variant_idx].len() as u32;
+                                if count > 0 && variant_idx < foliage_pipeline.instance_buffers.len() {
+                                    render_pass.set_vertex_buffer(
+                                        1,
+                                        foliage_pipeline.instance_buffers[variant_idx].slice(..),
+                                    );
+                                    render_pass.draw_indexed(
+                                        range.index_start..(range.index_start + range.index_count),
+                                        0,
+                                        0..count,
+                                    );
+                                }
+                            }
                         }
 
                         // PASS 2: 2D On-Screen HUD Overlay, Font Atlas, and Settings Menu
@@ -761,7 +701,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         current_fps = frame_count as f32 / elapsed_sec;
                         frame_time_ms = 1000.0 / current_fps.max(1.0);
                         let title = format!(
-                            "Restgine 3D FPP | FPS: {:.1} ({:.2} ms) | Vulkan Uncapped | 60Hz Physics + Dynamic Shaders | Pure Rust",
+                            "Restgine 3D FPP | FPS: {:.1} ({:.2} ms) | Vulkan Uncapped | 60Hz Physics + Procedural Grassland | Pure Rust",
                             current_fps, frame_time_ms
                         );
                         window.set_title(&title);
@@ -781,45 +721,4 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     })?;
 
     Ok(())
-}
-
-fn check_player_collision(pos: Vec3, radius: f32, height: f32, blocks: &[BlockAABB]) -> bool {
-    let p_min = Vec3::new(pos.x - radius, pos.y - height + 0.1, pos.z - radius);
-    let p_max = Vec3::new(pos.x + radius, pos.y, pos.z + radius);
-
-    for b in blocks {
-        if p_min.x < b.max.x
-            && p_max.x > b.min.x
-            && p_min.y < b.max.y
-            && p_max.y > b.min.y
-            && p_min.z < b.max.z
-            && p_max.z > b.min.z
-        {
-            return true;
-        }
-    }
-    false
-}
-
-fn get_ground_height_under_player(pos: Vec3, radius: f32, blocks: &[BlockAABB]) -> f32 {
-    let mut max_y = 0.0f32; // Floor plane is at Y=0
-    let p_min_x = pos.x - radius;
-    let p_max_x = pos.x + radius;
-    let p_min_z = pos.z - radius;
-    let p_max_z = pos.z + radius;
-
-    for b in blocks {
-        if p_min_x < b.max.x
-            && p_max_x > b.min.x
-            && p_min_z < b.max.z
-            && p_max_z > b.min.z
-            && b.max.y <= pos.y + 0.2
-        {
-            // Under or near feet
-            if b.max.y > max_y {
-                max_y = b.max.y;
-            }
-        }
-    }
-    max_y
 }
