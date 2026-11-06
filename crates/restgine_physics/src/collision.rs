@@ -41,22 +41,13 @@ pub fn check_overlap_25d(
                 None
             }
         }
-        (
-            FootprintShape::Circle { radius },
-            FootprintShape::AABB { half_extents },
-        ) => {
+        (FootprintShape::Circle { radius }, FootprintShape::AABB { half_extents }) => {
             circle_aabb_overlap(p1, *radius, p2, *half_extents)
         }
-        (
-            FootprintShape::AABB { half_extents },
-            FootprintShape::Circle { radius },
-        ) => {
+        (FootprintShape::AABB { half_extents }, FootprintShape::Circle { radius }) => {
             circle_aabb_overlap(p2, *radius, p1, *half_extents).map(|v| -v)
         }
-        (
-            FootprintShape::AABB { half_extents: h1 },
-            FootprintShape::AABB { half_extents: h2 },
-        ) => {
+        (FootprintShape::AABB { half_extents: h1 }, FootprintShape::AABB { half_extents: h2 }) => {
             let diff = p1 - p2;
             let overlap_x = (h1.x + h2.x) - diff.x.abs();
             let overlap_y = (h1.y + h2.y) - diff.y.abs();
@@ -76,7 +67,12 @@ pub fn check_overlap_25d(
     }
 }
 
-fn circle_aabb_overlap(circle_pos: Vec2, radius: f32, aabb_pos: Vec2, aabb_half: Vec2) -> Option<Vec2> {
+fn circle_aabb_overlap(
+    circle_pos: Vec2,
+    radius: f32,
+    aabb_pos: Vec2,
+    aabb_half: Vec2,
+) -> Option<Vec2> {
     let diff = circle_pos - aabb_pos;
     let clamped = Vec2::new(
         diff.x.clamp(-aabb_half.x, aabb_half.x),

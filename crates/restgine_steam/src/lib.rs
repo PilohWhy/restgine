@@ -72,7 +72,11 @@ impl SteamContext {
             let ach = stats.achievement(name);
             let _ = ach.set();
             let success = stats.store_stats();
-            log::info!("Steam achievement '{}' unlock requested (result: {:?})", name, success);
+            log::info!(
+                "Steam achievement '{}' unlock requested (result: {:?})",
+                name,
+                success
+            );
             true
         } else {
             log::info!("[Mock Steam] Achievement unlocked: '{}'", name);
@@ -89,14 +93,22 @@ impl SteamContext {
             writer
                 .write_all(data)
                 .map_err(|e| format!("Steam Cloud write error: {:?}", e))?;
-            log::info!("Successfully synced {} bytes to Steam Cloud: '{}'", data.len(), file_name);
+            log::info!(
+                "Successfully synced {} bytes to Steam Cloud: '{}'",
+                data.len(),
+                file_name
+            );
             Ok(())
         } else {
             // Local fallback
             let _ = std::fs::create_dir_all("saves");
             let path = format!("saves/{}", file_name);
             std::fs::write(&path, data).map_err(|e| e.to_string())?;
-            log::info!("[Mock Steam] Saved {} bytes to local storage: '{}'", data.len(), path);
+            log::info!(
+                "[Mock Steam] Saved {} bytes to local storage: '{}'",
+                data.len(),
+                path
+            );
             Ok(())
         }
     }
@@ -107,7 +119,10 @@ impl SteamContext {
             let storage = client.remote_storage();
             let file = storage.file(file_name);
             if !file.exists() {
-                return Err(format!("File '{}' does not exist in Steam Cloud", file_name));
+                return Err(format!(
+                    "File '{}' does not exist in Steam Cloud",
+                    file_name
+                ));
             }
             let mut reader = file.read();
             let mut buf = Vec::new();

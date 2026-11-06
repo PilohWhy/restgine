@@ -42,16 +42,18 @@ impl VfsReader {
         let mut header_buf = vec![0u8; header_len as usize];
         file.read_exact(&mut header_buf)?;
 
-        let header: PakHeader = serde_json::from_slice(&header_buf).map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
-        })?;
+        let header: PakHeader = serde_json::from_slice(&header_buf)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
 
         Ok(Self { file, header })
     }
 
     pub fn read_file(&mut self, path: &str) -> Result<Vec<u8>, std::io::Error> {
         let entry = self.header.entries.get(path).ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::NotFound, format!("File not in pak: {}", path))
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("File not in pak: {}", path),
+            )
         })?;
 
         self.file.seek(SeekFrom::Start(entry.offset))?;
@@ -68,6 +70,12 @@ impl VfsReader {
 /// Compiler utility to package a directory of assets into a `.pak` file for Steam distribution.
 pub struct VfsPacker {
     entries: HashMap<String, (PathBuf, u64)>,
+}
+
+impl Default for VfsPacker {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl VfsPacker {
@@ -134,7 +142,7 @@ impl VfsPacker {
         out.write_all(&finalized_header_json)?;
 
         // Write file contents sequentially
-        for (_, (disk_path, _)) in &self.entries {
+        for (disk_path, _) in self.entries.values() {
             let mut file_data = File::open(disk_path)?;
             std::io::copy(&mut file_data, &mut out)?;
         }

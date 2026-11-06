@@ -51,15 +51,25 @@ impl InputState {
     }
 
     pub fn set_axis(&mut self, axis_name: &str, value: f32) {
-        self.axes.insert(axis_name.to_lowercase(), value.clamp(-1.0, 1.0));
+        self.axes
+            .insert(axis_name.to_lowercase(), value.clamp(-1.0, 1.0));
     }
 
     pub fn get_axis(&self, axis_name: &str) -> f32 {
-        self.axes.get(&axis_name.to_lowercase()).copied().unwrap_or(0.0)
+        self.axes
+            .get(&axis_name.to_lowercase())
+            .copied()
+            .unwrap_or(0.0)
     }
 
     /// Get normalized 2D movement vector from four digital or analog inputs.
-    pub fn get_vector(&self, negative_x: &str, positive_x: &str, negative_y: &str, positive_y: &str) -> Vec2 {
+    pub fn get_vector(
+        &self,
+        negative_x: &str,
+        positive_x: &str,
+        negative_y: &str,
+        positive_y: &str,
+    ) -> Vec2 {
         let mut x = 0.0;
         let mut y = 0.0;
 

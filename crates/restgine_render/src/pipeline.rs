@@ -239,7 +239,8 @@ impl SpritePipeline {
                     },
                     // Instance Layout
                     wgpu::VertexBufferLayout {
-                        array_stride: std::mem::size_of::<SpriteInstanceRaw>() as wgpu::BufferAddress,
+                        array_stride: std::mem::size_of::<SpriteInstanceRaw>()
+                            as wgpu::BufferAddress,
                         step_mode: wgpu::VertexStepMode::Instance,
                         attributes: &[
                             wgpu::VertexAttribute {

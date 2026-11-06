@@ -60,7 +60,9 @@ pub fn register_engine_api(lua: &Lua, ctx: EngineContext) -> mlua::Result<()> {
             let is_solid: bool = params.get("is_solid").unwrap_or(true);
             let texture: String = params.get("texture").unwrap_or_default();
 
-            let layer_str: String = params.get("layer").unwrap_or_else(|_| "ground_entities".to_string());
+            let layer_str: String = params
+                .get("layer")
+                .unwrap_or_else(|_| "ground_entities".to_string());
             let layer = match layer_str.as_str() {
                 "floor" => RenderLayer::Floor,
                 "decals" => RenderLayer::GroundDecals,
@@ -90,17 +92,19 @@ pub fn register_engine_api(lua: &Lua, ctx: EngineContext) -> mlua::Result<()> {
     let world_arc = ctx.world.clone();
     restgine_table.set(
         "set_velocity",
-        lua.create_function(move |_, (_self, handle, vx, vy, vz): (Value, LuaEntity, f32, f32, Option<f32>)| {
-            let world = world_arc.lock().unwrap();
-            if let Ok(mut vel) = world.get::<&mut Velocity25D>(handle.entity) {
-                vel.velocity.x = vx;
-                vel.velocity.y = vy;
-                if let Some(z) = vz {
-                    vel.velocity.z = z;
+        lua.create_function(
+            move |_, (_self, handle, vx, vy, vz): (Value, LuaEntity, f32, f32, Option<f32>)| {
+                let world = world_arc.lock().unwrap();
+                if let Ok(mut vel) = world.get::<&mut Velocity25D>(handle.entity) {
+                    vel.velocity.x = vx;
+                    vel.velocity.y = vy;
+                    if let Some(z) = vz {
+                        vel.velocity.z = z;
+                    }
                 }
-            }
-            Ok(())
-        })?,
+                Ok(())
+            },
+        )?,
     )?;
 
     let world_arc = ctx.world.clone();
@@ -110,7 +114,11 @@ pub fn register_engine_api(lua: &Lua, ctx: EngineContext) -> mlua::Result<()> {
             let world = world_arc.lock().unwrap();
             let mut pos = (0.0, 0.0, 0.0);
             if let Ok(transform) = world.get::<&Transform25D>(handle.entity) {
-                pos = (transform.position.x, transform.position.y, transform.position.z);
+                pos = (
+                    transform.position.x,
+                    transform.position.y,
+                    transform.position.z,
+                );
             }
             Ok(pos)
         })?,
@@ -150,21 +158,25 @@ pub fn register_engine_api(lua: &Lua, ctx: EngineContext) -> mlua::Result<()> {
     let audio_arc = ctx.audio.clone();
     restgine_table.set(
         "play_sound",
-        lua.create_function(move |_, (_self, path, volume, speed): (Value, String, Option<f32>, Option<f32>)| {
-            let audio = audio_arc.lock().unwrap();
-            audio.play_sound(&path, volume.unwrap_or(1.0), speed.unwrap_or(1.0));
-            Ok(())
-        })?,
+        lua.create_function(
+            move |_, (_self, path, volume, speed): (Value, String, Option<f32>, Option<f32>)| {
+                let audio = audio_arc.lock().unwrap();
+                audio.play_sound(&path, volume.unwrap_or(1.0), speed.unwrap_or(1.0));
+                Ok(())
+            },
+        )?,
     )?;
 
     let audio_arc = ctx.audio.clone();
     restgine_table.set(
         "play_spatial_sound",
-        lua.create_function(move |_, (_self, path, x, y, max_dist): (Value, String, f32, f32, Option<f32>)| {
-            let audio = audio_arc.lock().unwrap();
-            audio.play_spatial_sound(&path, Vec2::new(x, y), max_dist.unwrap_or(300.0));
-            Ok(())
-        })?,
+        lua.create_function(
+            move |_, (_self, path, x, y, max_dist): (Value, String, f32, f32, Option<f32>)| {
+                let audio = audio_arc.lock().unwrap();
+                audio.play_spatial_sound(&path, Vec2::new(x, y), max_dist.unwrap_or(300.0));
+                Ok(())
+            },
+        )?,
     )?;
 
     let audio_arc = ctx.audio.clone();

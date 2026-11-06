@@ -22,7 +22,9 @@ pub fn step_physics_25d(world: &mut World, grid: &mut SpatialHashGrid, dt: f32) 
         if footprint.is_solid {
             let p = Vec2::new(transform.position.x, transform.position.y);
             let (min, max) = match footprint.shape {
-                FootprintShape::Circle { radius } => (p - Vec2::splat(radius), p + Vec2::splat(radius)),
+                FootprintShape::Circle { radius } => {
+                    (p - Vec2::splat(radius), p + Vec2::splat(radius))
+                }
                 FootprintShape::AABB { half_extents } => (p - half_extents, p + half_extents),
             };
             grid.insert_aabb(id, min, max);
@@ -37,16 +39,17 @@ pub fn step_physics_25d(world: &mut World, grid: &mut SpatialHashGrid, dt: f32) 
         .collect();
 
     for entity in moving_entities {
-        let (mut current_transform, current_footprint) = match world.query_one::<(&Transform25D, &Footprint)>(entity) {
-            Ok(mut q) => {
-                if let Some((t, f)) = q.get() {
-                    (*t, *f)
-                } else {
-                    continue;
+        let (mut current_transform, current_footprint) =
+            match world.query_one::<(&Transform25D, &Footprint)>(entity) {
+                Ok(mut q) => {
+                    if let Some((t, f)) = q.get() {
+                        (*t, *f)
+                    } else {
+                        continue;
+                    }
                 }
-            }
-            Err(_) => continue,
-        };
+                Err(_) => continue,
+            };
 
         let pos2 = Vec2::new(current_transform.position.x, current_transform.position.y);
         let query_box_min = pos2 - Vec2::splat(32.0);

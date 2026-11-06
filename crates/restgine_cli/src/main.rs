@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
 use notify::{RecursiveMode, Watcher};
-use restgine_assets::{VfsPacker};
+use restgine_assets::VfsPacker;
 use restgine_audio::AudioEngine;
 use restgine_core::{GameClock, GameConfig, InputState};
 use restgine_ecs::create_world;
@@ -147,7 +147,10 @@ end
 "#;
     fs::write(project_dir.join("scripts").join("main.luau"), sample_script)?;
 
-    println!("\x1b[1;32m[SUCCESS]\x1b[0m Project '{}' created successfully!", name);
+    println!(
+        "\x1b[1;32m[SUCCESS]\x1b[0m Project '{}' created successfully!",
+        name
+    );
     println!("\nTo get started:");
     println!("  cd {}", name);
     println!("  restgine dev\n");
@@ -168,11 +171,15 @@ fn run_dev_mode(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     println!("\x1b[1;36m=== Restgine Dev Runner ===\x1b[0m");
     println!("Title: {}", config.title);
     println!("Steam AppID: {}", config.steam_app_id);
-    println!("Native Viewport Height: {}p (Responsive Pixel Art)", config.viewport.native_height);
+    println!(
+        "Native Viewport Height: {}p (Responsive Pixel Art)",
+        config.viewport.native_height
+    );
 
     let world = Arc::new(Mutex::new(create_world()));
     let input = Arc::new(Mutex::new(InputState::new()));
-    let audio = Arc::new(Mutex::new(AudioEngine::new()?));
+    let (audio_engine, _audio_stream) = AudioEngine::init_default();
+    let audio = Arc::new(Mutex::new(audio_engine));
     let camera = Arc::new(Mutex::new(PixelCamera::new(config.viewport.native_height)));
     let steam = Arc::new(Mutex::new(SteamContext::init(config.steam_app_id)));
 
@@ -194,7 +201,10 @@ fn run_dev_mode(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let scripts_dir = path.join("scripts");
     if scripts_dir.exists() {
         watcher.watch(&scripts_dir, RecursiveMode::Recursive)?;
-        println!("\x1b[1;32m[HOT-RELOAD]\x1b[0m Watching {:?} for live code updates...", scripts_dir);
+        println!(
+            "\x1b[1;32m[HOT-RELOAD]\x1b[0m Watching {:?} for live code updates...",
+            scripts_dir
+        );
     }
 
     let mut clock = GameClock::new(config.viewport.target_fps);
@@ -233,7 +243,10 @@ fn run_dev_mode(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
         render_batch.clear();
         {
             let w = world.lock().unwrap();
-            for (_id, (transform, sprite)) in w.query::<(&restgine_ecs::Transform25D, &restgine_ecs::Sprite)>().iter() {
+            for (_id, (transform, sprite)) in w
+                .query::<(&restgine_ecs::Transform25D, &restgine_ecs::Sprite)>()
+                .iter()
+            {
                 render_batch.submit_sprite(transform, sprite);
             }
         }
@@ -281,7 +294,10 @@ fn build_release_pak() -> Result<(), Box<dyn std::error::Error>> {
 
     let pak_output = dist_dir.join("game.pak");
     packer.write_to_file(&pak_output)?;
-    println!("\x1b[1;32m[PACKED]\x1b[0m Created standalone archive at {:?}", pak_output);
+    println!(
+        "\x1b[1;32m[PACKED]\x1b[0m Created standalone archive at {:?}",
+        pak_output
+    );
     println!("Ready for Steam distribution deployment.");
 
     Ok(())

@@ -56,9 +56,6 @@ impl PixelCamera {
         let vx = screen_x / self.scale as f32;
         let vy = screen_y / self.scale as f32;
 
-        Vec2::new(
-            self.position.x - half_w + vx,
-            self.position.y - half_h + vy,
-        )
+        Vec2::new(self.position.x - half_w + vx, self.position.y - half_h + vy)
     }
 }

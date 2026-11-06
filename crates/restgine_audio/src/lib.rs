@@ -16,7 +16,6 @@ pub enum AudioError {
 
 /// 2.5D Spatial audio system for sound effects and music.
 pub struct AudioEngine {
-    _stream: Option<OutputStream>,
     stream_handle: Option<OutputStreamHandle>,
     sound_cache: HashMap<String, Arc<Vec<u8>>>,
     master_volume: f32,
@@ -24,24 +23,27 @@ pub struct AudioEngine {
 }
 
 impl AudioEngine {
-    pub fn new() -> Result<Self, AudioError> {
+    /// Create a new AudioEngine with an optional OutputStreamHandle.
+    pub fn new(handle: Option<OutputStreamHandle>) -> Self {
+        Self {
+            stream_handle: handle,
+            sound_cache: HashMap::new(),
+            master_volume: 1.0,
+            listener_pos: Vec2::ZERO,
+        }
+    }
+
+    /// Helper to initialize default audio device stream and engine.
+    /// Returns the engine and the underlying stream (which must be kept alive by the runner).
+    pub fn init_default() -> (Self, Option<OutputStream>) {
         match OutputStream::try_default() {
-            Ok((stream, handle)) => Ok(Self {
-                _stream: Some(stream),
-                stream_handle: Some(handle),
-                sound_cache: HashMap::new(),
-                master_volume: 1.0,
-                listener_pos: Vec2::ZERO,
-            }),
+            Ok((stream, handle)) => (Self::new(Some(handle)), Some(stream)),
             Err(e) => {
-                log::warn!("Audio output device could not be opened: {}. Audio will run in silent mode.", e);
-                Ok(Self {
-                    _stream: None,
-                    stream_handle: None,
-                    sound_cache: HashMap::new(),
-                    master_volume: 1.0,
-                    listener_pos: Vec2::ZERO,
-                })
+                log::warn!(
+                    "Audio output device could not be opened: {}. Audio will run in silent mode.",
+                    e
+                );
+                (Self::new(None), None)
             }
         }
     }
@@ -64,9 +66,8 @@ impl AudioEngine {
             return Ok(());
         }
 
-        let bytes = std::fs::read(path_ref).map_err(|e| {
-            AudioError::LoadError(path_str.clone(), e.to_string())
-        })?;
+        let bytes = std::fs::read(path_ref)
+            .map_err(|e| AudioError::LoadError(path_str.clone(), e.to_string()))?;
 
         self.sound_cache.insert(path_str, Arc::new(bytes));
         Ok(())
@@ -89,17 +90,14 @@ impl AudioEngine {
                     sink.detach();
                 }
             }
-        } else {
-            // Attempt to load and play on the fly
-            if let Ok(file) = File::open(sound_id) {
-                let reader = BufReader::new(file);
-                if let Ok(source) = Decoder::new(reader) {
-                    if let Ok(sink) = Sink::try_new(handle) {
-                        sink.set_volume(volume * self.master_volume);
-                        sink.set_speed(speed.max(0.1));
-                        sink.append(source);
-                        sink.detach();
-                    }
+        } else if let Ok(file) = File::open(sound_id) {
+            let reader = BufReader::new(file);
+            if let Ok(source) = Decoder::new(reader) {
+                if let Ok(sink) = Sink::try_new(handle) {
+                    sink.set_volume(volume * self.master_volume);
+                    sink.set_speed(speed.max(0.1));
+                    sink.append(source);
+                    sink.detach();
                 }
             }
         }

@@ -28,9 +28,15 @@ impl LuauRuntime {
             let code = std::fs::read_to_string(&self.main_script_path)
                 .map_err(|e| mlua::Error::RuntimeError(format!("Failed to read script: {}", e)))?;
             self.lua.load(&code).set_name("main.luau").exec()?;
-            log::info!("Successfully loaded/reloaded Luau script: {:?}", self.main_script_path);
+            log::info!(
+                "Successfully loaded/reloaded Luau script: {:?}",
+                self.main_script_path
+            );
         } else {
-            log::warn!("Luau script does not exist yet at {:?}", self.main_script_path);
+            log::warn!(
+                "Luau script does not exist yet at {:?}",
+                self.main_script_path
+            );
         }
         Ok(())
     }

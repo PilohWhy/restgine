@@ -31,7 +31,9 @@ pub struct IsaacRenderBatch {
 
 impl IsaacRenderBatch {
     pub fn new() -> Self {
-        Self { items: Vec::with_capacity(4096) }
+        Self {
+            items: Vec::with_capacity(4096),
+        }
     }
 
     pub fn clear(&mut self) {
@@ -124,7 +126,7 @@ mod tests {
         let mut batch = IsaacRenderBatch::new();
 
         let t_front = Transform25D::new(50.0, 100.0, 0.0); // Footprint y = 100
-        let t_back = Transform25D::new(50.0, 20.0, 0.0);   // Footprint y = 20
+        let t_back = Transform25D::new(50.0, 20.0, 0.0); // Footprint y = 20
 
         let s1 = Sprite {
             layer: RenderLayer::GroundEntities,

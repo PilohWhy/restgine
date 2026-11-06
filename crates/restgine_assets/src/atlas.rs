@@ -16,6 +16,12 @@ pub struct TextureAtlasBuilder {
     padding: u32,
 }
 
+impl Default for TextureAtlasBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TextureAtlasBuilder {
     pub fn new() -> Self {
         Self {
@@ -63,7 +69,9 @@ impl TextureAtlasBuilder {
             row_max_h = row_max_h.max(h);
         }
 
-        let atlas_height = (current_y + row_max_h + self.padding).next_power_of_two().max(128);
+        let atlas_height = (current_y + row_max_h + self.padding)
+            .next_power_of_two()
+            .max(128);
         let mut atlas_image = RgbaImage::from_pixel(atlas_width, atlas_height, Rgba([0, 0, 0, 0]));
         let mut regions = HashMap::new();
 
