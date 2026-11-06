@@ -11,6 +11,7 @@ restgine_core.workspace = true
 restgine_ecs.workspace = true
 wgpu.workspace = true
 winit.workspace = true
+taffy.workspace = true
 bytemuck.workspace = true
 glam.workspace = true
 log.workspace = true

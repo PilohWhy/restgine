@@ -13,3 +13,4 @@ image.workspace = true
 thiserror.workspace = true
 log.workspace = true
 glam.workspace = true
+gltf.workspace = true

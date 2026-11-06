@@ -51,6 +51,22 @@ impl Transform3D {
         )
     }
 
+    /// Interpolated translation between previous physics tick and current physics tick
+    /// based on sub-frame alpha factor [0.0, 1.0].
+    pub fn interpolated_translation(&self, alpha: f32) -> Vec3A {
+        self.previous_translation
+            .lerp(self.translation, alpha.clamp(0.0, 1.0))
+    }
+
+    /// Interpolated 4x4 model matrix representation for smooth uncapped rendering.
+    pub fn interpolated_mat4(&self, alpha: f32) -> Mat4 {
+        Mat4::from_scale_rotation_translation(
+            Vec3::from(self.scale),
+            self.rotation,
+            Vec3::from(self.interpolated_translation(alpha)),
+        )
+    }
+
     /// 2D / 2.5D Screen coordinates projection for isometric or top-down games:
     /// screen_x = x, screen_y = y - z.
     pub fn screen_coords_25d(&self) -> Vec2 {

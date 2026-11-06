@@ -77,6 +77,7 @@ pub struct SpritePipeline {
     pub quad_vertex_buffer: wgpu::Buffer,
     pub instance_buffer: wgpu::Buffer,
     pub instance_buffer_capacity: usize,
+    pub texture_bind_group_layout: wgpu::BindGroupLayout,
     pub default_sampler: wgpu::Sampler,
     pub default_texture_bind_group: wgpu::BindGroup,
 }
@@ -305,9 +306,31 @@ impl SpritePipeline {
             quad_vertex_buffer,
             instance_buffer,
             instance_buffer_capacity: instance_capacity,
+            texture_bind_group_layout,
             default_sampler,
             default_texture_bind_group,
         }
+    }
+
+    pub fn create_texture_bind_group(
+        &self,
+        device: &wgpu::Device,
+        view: &wgpu::TextureView,
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Custom Texture Bind Group"),
+            layout: &self.texture_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.default_sampler),
+                },
+            ],
+        })
     }
 
     pub fn update_camera(&self, queue: &wgpu::Queue, view_proj: Mat4) {
