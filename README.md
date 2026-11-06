@@ -122,11 +122,12 @@ Edits to scripts in `scripts/` or sprites in `assets/` hot-reload while the game
 
 ```
 crates/
-├── restgine_core/       # 16MB thread-local linear scratchpads, Transform3D
+├── restgine/            # Top-level unified facade crate and prelude
+├── restgine_core/       # 16MB thread-local linear scratchpads, GameClock, Transform3D
 ├── restgine_ecs/        # Continuum archetype ECS (MeshletCluster, RigidBodyXPBD, Sprite)
 ├── restgine_physics/    # Sub-stepped XPBD solver, 8-way SIMD BVH broadphase
-├── restgine_render/     # 64-bit Visibility Buffer pipeline, Reversed-Z 3D camera
-├── restgine_audio/      # rodio-powered spatial audio engine and sample cache
+├── restgine_render/     # Reversed-Z 3D camera, terrain, foliage, forest, sky, and visbuffer
+├── restgine_audio/      # rodio-powered spatial 2.5D/3D and ambient audio engine
 ├── restgine_assets/     # Aseprite loader, texture atlas builder, and .pak packer
 ├── restgine_steam/      # Platform abstraction layer (gamepad input, cloud saves, achievements)
 ├── restgine_luau/       # Luau runtime, bindings, and automated type generator

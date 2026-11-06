@@ -10,10 +10,6 @@ description = "Command line interface and standalone runtime for Restgine"
 name = "restgine"
 path = "src/main.rs"
 
-[[bin]]
-name = "game"
-path = "src/game_bin.rs"
-
 [dependencies]
 restgine_core.workspace = true
 restgine_ecs.workspace = true
@@ -26,7 +22,6 @@ restgine_steam.workspace = true
 wgpu.workspace = true
 winit.workspace = true
 bytemuck.workspace = true
-taffy.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 clap.workspace = true

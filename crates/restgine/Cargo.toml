@@ -1,0 +1,27 @@
+[package]
+name = "restgine"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "High-performance universal 2D/3D continuum game engine for Steam"
+repository.workspace = true
+
+[dependencies]
+restgine_core = { path = "../restgine_core", version = "0.1.0" }
+restgine_ecs = { path = "../restgine_ecs", version = "0.1.0" }
+restgine_physics = { path = "../restgine_physics", version = "0.1.0" }
+restgine_render = { path = "../restgine_render", version = "0.1.0" }
+restgine_audio = { path = "../restgine_audio", version = "0.1.0" }
+restgine_assets = { path = "../restgine_assets", version = "0.1.0" }
+restgine_luau = { path = "../restgine_luau", version = "0.1.0" }
+restgine_steam = { path = "../restgine_steam", version = "0.1.0" }
+
+# Re-exported ecosystem dependencies
+glam.workspace = true
+wgpu.workspace = true
+winit.workspace = true
+hecs.workspace = true
+bytemuck.workspace = true
+image.workspace = true
+log.workspace = true

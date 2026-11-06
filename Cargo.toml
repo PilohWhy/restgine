@@ -9,6 +9,7 @@ members = [
     "crates/restgine_assets",
     "crates/restgine_luau",
     "crates/restgine_steam",
+    "crates/restgine",
     "crates/restgine_cli",
 ]
 
@@ -66,6 +67,7 @@ restgine_audio = { path = "crates/restgine_audio" }
 restgine_assets = { path = "crates/restgine_assets" }
 restgine_luau = { path = "crates/restgine_luau" }
 restgine_steam = { path = "crates/restgine_steam" }
+restgine = { path = "crates/restgine" }
 
 [profile.release]
 opt-level = 3
