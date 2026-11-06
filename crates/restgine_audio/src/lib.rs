@@ -1,5 +1,5 @@
 use glam::Vec2;
-use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink};
+use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink, Source};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, Cursor};
@@ -71,6 +71,37 @@ impl AudioEngine {
 
         self.sound_cache.insert(path_str, Arc::new(bytes));
         Ok(())
+    }
+
+    /// Preload sound bytes directly into memory under a specific sound ID.
+    pub fn preload_sound_bytes(&mut self, sound_id: &str, bytes: Vec<u8>) {
+        self.sound_cache.insert(sound_id.to_string(), Arc::new(bytes));
+    }
+
+    /// Play an audio track in an infinite loop (e.g. ambient wind / forest).
+    /// Returns the active Sink handle so volume or playback can be controlled.
+    pub fn play_looping_sound(&self, sound_id: &str, volume: f32) -> Option<Sink> {
+        let handle = self.stream_handle.as_ref()?;
+        if let Some(bytes) = self.sound_cache.get(sound_id) {
+            let cursor = Cursor::new((**bytes).clone());
+            if let Ok(source) = Decoder::new(cursor) {
+                if let Ok(sink) = Sink::try_new(handle) {
+                    sink.set_volume(volume * self.master_volume);
+                    sink.append(source.repeat_infinite());
+                    return Some(sink);
+                }
+            }
+        } else if let Ok(file) = File::open(sound_id) {
+            let reader = BufReader::new(file);
+            if let Ok(source) = Decoder::new(reader) {
+                if let Ok(sink) = Sink::try_new(handle) {
+                    sink.set_volume(volume * self.master_volume);
+                    sink.append(source.repeat_infinite());
+                    return Some(sink);
+                }
+            }
+        }
+        None
     }
 
     /// Play a 2D sound effect with optional pitch variation.

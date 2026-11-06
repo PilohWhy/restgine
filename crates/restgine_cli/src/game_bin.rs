@@ -1,9 +1,15 @@
+#![windows_subsystem = "windows"]
+
 mod settings_ui;
 
-use glam::{Mat4, Vec3, Vec3A};
+use glam::{Mat4, Vec2, Vec3, Vec3A};
+use restgine_audio::AudioEngine;
 use restgine_core::time::GameClock;
 use restgine_core::ThreadScratchpad;
 use restgine_render::foliage::{scatter_chunk_grass, FoliagePipeline, GrassInstanceRaw};
+use restgine_render::forest::{
+    scatter_chunk_forest, ForestInstanceRaw, ForestPipeline, TreeCollider,
+};
 use restgine_render::mesh3d::CameraSettingsInput;
 use restgine_render::terrain::{terrain_height, TerrainChunkInstance, TerrainPipeline};
 use restgine_render::{
@@ -30,13 +36,22 @@ const GRASS_ATLAS_ALBEDO_BYTES: &[u8] =
 const GRASS_ATLAS_NORMAL_BYTES: &[u8] =
     include_bytes!("../../../assets/models/grass/grass_atlas_normal.png");
 
-/// Dynamic first-person flashlight with organic inertia, breathing sway, and walking bobbing.
+/// Ultra-fast pseudo-random number generator for zero-allocation audio pitch/volume variance.
+#[inline]
+fn random_float(seed: &mut u64) -> f32 {
+    *seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+    ((*seed >> 32) as u32 as f32) / 4294967295.0
+}
+
+/// Dynamic first-person flashlight with organic inertia, breathing sway, walking bobbing,
+/// and mechanical 2-click delayed activation matching sound effects.
 struct FlashlightState {
     pub is_on: bool,
     pub current_pos: Vec3,
     pub current_dir: Vec3,
     pub bob_time: f32,
     pub sway_time: f32,
+    pub pending_toggle: Option<(bool, f32)>, // (target_state, remaining_delay_sec)
 }
 
 impl FlashlightState {
@@ -47,7 +62,26 @@ impl FlashlightState {
             current_dir: initial_dir,
             bob_time: 0.0,
             sway_time: 0.0,
+            pending_toggle: None,
         }
+    }
+
+    /// Triggers flashlight toggle with physical click audio.
+    /// Light state actually activates on the 2nd click (~0.32s delay).
+    fn toggle(&mut self, audio: &AudioEngine) {
+        let target = match self.pending_toggle {
+            Some((next_state, _)) => !next_state,
+            None => !self.is_on,
+        };
+
+        if target {
+            audio.play_sound("assets/audio/flashlight_on.wav", 1.0, 1.0);
+        } else {
+            audio.play_sound("assets/audio/flashlight_off.wav", 1.0, 1.0);
+        }
+
+        // Mechanical switch delay: 2nd click occurs at 320ms
+        self.pending_toggle = Some((target, 0.32));
     }
 
     fn update(
@@ -58,6 +92,15 @@ impl FlashlightState {
         is_moving: bool,
         is_sprinting: bool,
     ) {
+        // Handle pending 2nd click activation
+        if let Some((target_state, ref mut remaining)) = self.pending_toggle {
+            *remaining -= dt;
+            if *remaining <= 0.0 {
+                self.is_on = target_state;
+                self.pending_toggle = None;
+            }
+        }
+
         self.sway_time += dt;
 
         let world_up = Vec3::Y;
@@ -175,6 +218,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Mesh3DPipeline::DEPTH_FORMAT,
         &mesh3d_pipeline.camera_bind_group_layout,
     );
+
+    // Audio Engine initialization & background forest ambience loop
+    let (mut audio_engine, _audio_stream) = AudioEngine::init_default();
+    let _ = audio_engine.preload_sound("assets/audio/step_dirt.ogg");
+    let _ = audio_engine.preload_sound("assets/audio/flashlight_on.wav");
+    let _ = audio_engine.preload_sound("assets/audio/flashlight_off.wav");
+    let _ambient_sink = audio_engine.play_looping_sound("assets/audio/forest_ambience.wav", 0.60);
+
+    // Dense Dark Forest Pipeline (Oak Trees & Lilac Bushes with PBR bark & waxy leaves)
+    let forest_bin_path = std::path::Path::new("assets/models/forest/forest_assets.bin");
+    let forest_tex_path = std::path::Path::new("assets/textures/forest");
+    let forest_pipeline = ForestPipeline::new(
+        device,
+        queue,
+        config.format,
+        Mesh3DPipeline::DEPTH_FORMAT,
+        &mesh3d_pipeline.camera_bind_group_layout,
+        forest_bin_path,
+        forest_tex_path,
+    )?;
+
+    let num_forest_variants = forest_pipeline.variants.len();
+    let mut forest_instances_by_variant: Vec<Vec<ForestInstanceRaw>> = (0..num_forest_variants)
+        .map(|_| Vec::with_capacity(ForestPipeline::MAX_INSTANCES_PER_VARIANT))
+        .collect();
+    let mut cached_forest_counts = vec![0usize; num_forest_variants];
+    let mut active_tree_colliders: Vec<TreeCollider> = Vec::with_capacity(512);
+    let mut last_forest_center_cx = i32::MIN;
+    let mut last_forest_center_cz = i32::MIN;
+
+    let mut footstep_timer = 0.0f32;
+    let mut rng_seed = 9876543210123456789u64;
 
     let hud_pipeline = SpritePipeline::new(device, config.format);
 
@@ -352,10 +427,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             }
                         }
-                        // Toggle Flashlight with 'F' key
+                        // Toggle Flashlight with 'F' key (plays click audio, light activates on 2nd click)
                         KeyCode::KeyF => {
                             if is_pressed {
-                                flashlight.is_on = !flashlight.is_on;
+                                flashlight.toggle(&audio_engine);
                             }
                         }
                         KeyCode::KeyW => key_w = is_pressed,
@@ -402,13 +477,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
 
                             let speed = if key_shift { move_speed * 1.6 } else { move_speed };
+                            let is_moving = wish_dir.length_squared() > 0.0;
 
-                            if wish_dir.length_squared() > 0.0 {
+                            if is_moving {
                                 wish_dir = wish_dir.normalize();
                                 let horizontal_move = wish_dir * speed * fixed_dt;
                                 player_pos.x += horizontal_move.x;
                                 player_pos.z += horizontal_move.z;
                             }
+
+                            // Dynamic physical collision against tree trunks & bushes (r_player = 0.35m)
+                            let player_radius = 0.35f32;
+                            let mut p_xz = Vec2::new(player_pos.x, player_pos.z);
+                            for collider in &active_tree_colliders {
+                                let diff = p_xz - collider.center;
+                                let min_dist = collider.radius + player_radius;
+                                let dist_sq = diff.length_squared();
+                                if dist_sq < min_dist * min_dist && dist_sq > 0.0001 {
+                                    let dist = dist_sq.sqrt();
+                                    let normal = diff / dist;
+                                    let penetration = min_dist - dist;
+                                    p_xz += normal * penetration;
+                                }
+                            }
+                            player_pos.x = p_xz.x;
+                            player_pos.z = p_xz.y;
 
                             // Vertical Jump & Gravity
                             if key_space && is_grounded {
@@ -428,6 +521,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             } else {
                                 player_pos.y = new_y;
                                 is_grounded = false;
+                            }
+
+                            // Dynamic footsteps audio playback (speed-dependent cadence & randomized pitch/volume)
+                            if is_grounded && is_moving {
+                                footstep_timer += fixed_dt;
+                                let step_interval = if key_shift { 0.30 } else { 0.48 };
+                                if footstep_timer >= step_interval {
+                                    footstep_timer = 0.0;
+                                    let pitch = 0.85 + random_float(&mut rng_seed) * 0.30;
+                                    let volume = 0.75 + random_float(&mut rng_seed) * 0.25;
+                                    audio_engine.play_sound("assets/audio/step_dirt.ogg", volume, pitch);
+                                }
+                            } else {
+                                footstep_timer = 0.20;
                             }
                         }
                     }
@@ -531,6 +638,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     bytemuck::cast_slice(instances),
                                 );
                             }
+                        }
+                    }
+
+                    // --- HIGH-PERFORMANCE DENSE FOREST STREAMING & COLLIDERS ---
+                    let forest_radius = (actual_view_dist / chunk_size).ceil() as i32;
+                    let needs_forest_rebuild = center_cx != last_forest_center_cx
+                        || center_cz != last_forest_center_cz;
+
+                    if needs_forest_rebuild {
+                        last_forest_center_cx = center_cx;
+                        last_forest_center_cz = center_cz;
+
+                        for list in &mut forest_instances_by_variant {
+                            list.clear();
+                        }
+                        active_tree_colliders.clear();
+
+                        for cz in (center_cz - forest_radius)..=(center_cz + forest_radius) {
+                            for cx in (center_cx - forest_radius)..=(center_cx + forest_radius) {
+                                scatter_chunk_forest(
+                                    cx,
+                                    cz,
+                                    &forest_pipeline.variants,
+                                    &mut forest_instances_by_variant,
+                                    &mut active_tree_colliders,
+                                );
+                            }
+                        }
+
+                        for (i, instances) in forest_instances_by_variant.iter().enumerate() {
+                            cached_forest_counts[i] = instances.len();
+                            forest_pipeline.update_variant_instances(queue, i, instances);
                         }
                     }
 
@@ -793,7 +932,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 0..terrain_instances.len() as u32,
                             );
 
-                            // 1B: Dense 3D Foliage with Wind Sway & Alpha Cutout (Cached buffers)
+                            // 1B: Dense Dark Forest (Solid Bark Trunks & Double-Sided Canopy Leaves)
+                            forest_pipeline.render_bark(
+                                &mut render_pass,
+                                &mesh3d_pipeline.camera_bind_group,
+                                &cached_forest_counts,
+                            );
+                            forest_pipeline.render_leaf(
+                                &mut render_pass,
+                                &mesh3d_pipeline.camera_bind_group,
+                                &cached_forest_counts,
+                            );
+
+                            // 1C: Dense 3D Foliage with Wind Sway & Alpha Cutout (Cached buffers)
                             render_pass.set_pipeline(&foliage_pipeline.pipeline);
                             render_pass.set_bind_group(0, &mesh3d_pipeline.camera_bind_group, &[]);
                             render_pass.set_bind_group(1, &foliage_pipeline.material_bind_group, &[]);
