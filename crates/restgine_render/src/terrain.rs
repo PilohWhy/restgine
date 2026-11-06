@@ -140,14 +140,14 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Mathematically safe orthonormal tangent basis for world XZ UV projection:
     // U axis increases along +X, V axis increases along +Z.
     let t = normalize(vec3<f32>(1.0, 0.0, 0.0) - n * n.x);
-    let b = cross(t, n);
-    let tbn = mat3x3<f32>(t, b, n);
+    let bitan = cross(t, n);
+    let tbn = mat3x3<f32>(t, bitan, n);
 
     let view_dir = normalize(camera.camera_pos.xyz - in.world_pos);
 
     // Parallax Height Displacement:
     // Uses 16-to-8 bit normalized Poliigon Displacement packed in the Blue channel
-    let v_tan = vec3<f32>(dot(view_dir, t), dot(view_dir, b), dot(view_dir, n));
+    let v_tan = vec3<f32>(dot(view_dir, t), dot(view_dir, bitan), dot(view_dir, n));
     let initial_ao_rough = textureSample(t_ao_roughness, s_ao_roughness, in.uv);
     let disp_height = initial_ao_rough.b; // 0..1 displacement
     let parallax_offset = (v_tan.xy / max(v_tan.z, 0.22)) * ((disp_height - 0.5) * 0.024);
