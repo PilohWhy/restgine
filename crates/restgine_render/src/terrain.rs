@@ -9,7 +9,9 @@ pub fn terrain_height(x: f32, z: f32) -> f32 {
     let s1 = (x * 0.025).sin() * (z * 0.025).cos() * 0.95;
     let s2 = (x * 0.07 + 1.3).sin() * (z * 0.06 - 0.7).cos() * 0.40;
     let s3 = (x * 0.18 - 2.1).cos() * (z * 0.15 + 1.8).sin() * 0.15;
-    s1 + s2 + s3 + 1.0
+    let s4 = (x * 0.48).sin() * (z * 0.45).cos() * 0.08;
+    let s5 = (x * 1.15 + 0.5).cos() * (z * 1.05 - 0.4).sin() * 0.035;
+    s1 + s2 + s3 + s4 + s5 + 1.0
 }
 
 /// Continuous analytical surface normal for smooth lighting.
@@ -92,7 +94,9 @@ fn get_terrain_height(x: f32, z: f32) -> f32 {
     let s1 = sin(x * 0.025) * cos(z * 0.025) * 0.95;
     let s2 = sin(x * 0.07 + 1.3) * cos(z * 0.06 - 0.7) * 0.40;
     let s3 = cos(x * 0.18 - 2.1) * sin(z * 0.15 + 1.8) * 0.15;
-    return s1 + s2 + s3 + 1.0;
+    let s4 = sin(x * 0.48) * cos(z * 0.45) * 0.08;
+    let s5 = cos(x * 1.15 + 0.5) * sin(z * 1.05 - 0.4) * 0.035;
+    return s1 + s2 + s3 + s4 + s5 + 1.0;
 }
 
 fn get_terrain_normal(x: f32, z: f32) -> vec3<f32> {
@@ -132,22 +136,35 @@ fn vs_main(in: VertexInput, inst: InstanceInput) -> VertexOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    // 1. Sample PBR Textures
-    let albedo = textureSample(t_albedo, s_albedo, in.uv).rgb;
-    let raw_normal = textureSample(t_normal, s_normal, in.uv).xyz * 2.0 - 1.0;
-    let ao_rough = textureSample(t_ao_roughness, s_ao_roughness, in.uv);
+    let n = normalize(in.world_normal);
+    // Mathematically safe orthonormal tangent basis for world XZ UV projection:
+    // U axis increases along +X, V axis increases along +Z.
+    let t = normalize(vec3<f32>(1.0, 0.0, 0.0) - n * n.x);
+    let b = cross(t, n);
+    let tbn = mat3x3<f32>(t, b, n);
+
+    let view_dir = normalize(camera.camera_pos.xyz - in.world_pos);
+
+    // Parallax Height Displacement:
+    // Uses 16-to-8 bit normalized Poliigon Displacement packed in the Blue channel
+    let v_tan = vec3<f32>(dot(view_dir, t), dot(view_dir, b), dot(view_dir, n));
+    let initial_ao_rough = textureSample(t_ao_roughness, s_ao_roughness, in.uv);
+    let disp_height = initial_ao_rough.b; // 0..1 displacement
+    let parallax_offset = (v_tan.xy / max(v_tan.z, 0.22)) * ((disp_height - 0.5) * 0.024);
+    let uv = in.uv - parallax_offset;
+
+    // 1. Sample PBR Textures at displaced UV
+    let albedo = textureSample(t_albedo, s_albedo, uv).rgb;
+    let raw_normal = textureSample(t_normal, s_normal, uv).xyz * 2.0 - 1.0;
+    let ao_rough = textureSample(t_ao_roughness, s_ao_roughness, uv);
     let ao = ao_rough.r;
     let roughness = ao_rough.g;
+    let height = ao_rough.b;
 
-    // Perturb surface normal via Tangent Space
-    let up = vec3<f32>(0.0, 1.0, 0.0);
-    let tangent = normalize(cross(up, in.world_normal));
-    let bitangent = cross(in.world_normal, tangent);
-    let tbn = mat3x3<f32>(tangent, bitangent, in.world_normal);
-    let normal = normalize(tbn * raw_normal);
+    // Boosted normal vector for strong tactile micro-relief (stones, roots, crevices)
+    let normal = normalize(tbn * (raw_normal * vec3<f32>(2.0, 2.0, 1.0)));
 
     let light_dir = normalize(camera.light_dir.xyz);
-    let view_dir = normalize(camera.camera_pos.xyz - in.world_pos);
 
     // 2. Cascaded / Directional Shadow Sampling (PCF filtering)
     var shadow: f32 = 1.0;
@@ -171,7 +188,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         }
     }
 
-    // 3. Ambient Lighting & GI
+    // 3. Ambient Lighting & High-Contrast Crevice AO
     let gi_tier = camera.quality_tiers.y;
     var ambient_factor: f32 = 0.16;
     if (gi_tier == 1u) {
@@ -179,22 +196,31 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     } else if (gi_tier >= 2u) {
         ambient_factor = 0.28;
     }
-    let ambient = vec3<f32>(0.18, 0.22, 0.32) * (ambient_factor * ao);
+
+    // Deep crevice ambient occlusion: cracks, cavities, and soil depressions stay richly shadowed
+    let crevice_ao = pow(ao, 2.6) * mix(0.38, 1.0, height);
+
+    // Foliage Contact Shadow onto soil under grass clumps
+    let clump_shadow_pattern = sin(in.world_pos.x * 2.8 + sin(in.world_pos.z * 1.5)) * cos(in.world_pos.z * 2.8 + cos(in.world_pos.x * 1.5));
+    let grass_contact = clamp(clump_shadow_pattern * 0.35 + 0.75, 0.45, 1.0);
+    let final_ao = crevice_ao * grass_contact;
+
+    let ambient = vec3<f32>(0.16, 0.20, 0.28) * (ambient_factor * final_ao);
 
     // 4. Diffuse & PBR GGX Specular
     let diff = max(dot(normal, light_dir), 0.0);
     let sun_color = vec3<f32>(1.0, 0.98, 0.92);
-    let diffuse = diff * sun_color * shadow;
+    let diffuse = diff * sun_color * shadow * final_ao;
 
     let half_dir = normalize(light_dir + view_dir);
     let ndoth = max(dot(normal, half_dir), 0.0);
     let spec_power = mix(64.0, 8.0, roughness);
-    let spec = pow(ndoth, spec_power) * (1.0 - roughness * 0.7) * shadow;
+    let spec = pow(ndoth, spec_power) * (1.0 - roughness * 0.7) * shadow * final_ao;
     let specular = spec * vec3<f32>(0.15, 0.15, 0.15);
 
     var lit_color = (ambient + diffuse) * albedo + specular;
 
-    // 5. Realistic Flashlight (Spotlight with smooth cone & inverse-square falloff)
+    // 5. Realistic Flashlight with Tactile Crevice Self-Shadowing
     if (camera.flashlight_pos.w > 0.5) {
         let to_light = camera.flashlight_pos.xyz - in.world_pos;
         let dist = length(to_light);
@@ -216,9 +242,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
             let half_flash = normalize(l_dir + view_dir);
             let flash_ndoth = max(dot(normal, half_flash), 0.0);
-            let flash_spec = pow(flash_ndoth, mix(32.0, 96.0, 1.0 - roughness)) * (1.0 - roughness * 0.5);
+            let flash_spec = pow(flash_ndoth, mix(20.0, 80.0, 1.0 - roughness)) * (1.0 - roughness * 0.4);
 
-            lit_color += (flash_diff * albedo + flash_spec * vec3<f32>(0.22)) * flash_color * (smooth_spot * atten * dist_cutoff * flash_intensity);
+            // Multiply by final_ao so under the flashlight, crevices and grass shadows stay dark!
+            lit_color += (flash_diff * albedo * final_ao + flash_spec * vec3<f32>(0.22) * final_ao) * flash_color * (smooth_spot * atten * dist_cutoff * flash_intensity);
         }
     }
 
@@ -259,7 +286,7 @@ pub struct TerrainPipeline {
 
 impl TerrainPipeline {
     pub const CHUNK_SIZE: f32 = 32.0;
-    pub const GRID_STEPS: usize = 32; // 1m resolution (33x33 vertices per chunk)
+    pub const GRID_STEPS: usize = 48; // 0.66m resolution for undulating physical knolls and soil relief
 
     #[allow(clippy::too_many_arguments)]
     pub fn new(

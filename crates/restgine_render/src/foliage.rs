@@ -89,6 +89,7 @@ struct VertexOutput {
     @location(2) uv: vec2<f32>,
     @location(3) color: vec4<f32>,
     @location(4) shadow_pos: vec3<f32>,
+    @location(5) height_factor: f32,
 };
 
 @vertex
@@ -151,6 +152,7 @@ fn vs_main(in: VertexInput, inst: InstanceInput) -> VertexOutput {
     out.clip_position = camera.view_proj * vec4<f32>(final_world_pos, 1.0);
     out.uv = in.uv;
     out.color = inst.color_tint;
+    out.height_factor = height_factor;
 
     // Shadow Map Coordinate
     let shadow_clip = camera.light_view_proj * vec4<f32>(final_world_pos, 1.0);
@@ -172,36 +174,35 @@ fn fs_main(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @location
         discard;
     }
 
-    let albedo = tex_color.rgb * in.color.rgb;
+    // 1. Sample 2K Grass Normal Map
+    let raw_normal = textureSample(t_grass_normal, s_grass_normal, in.uv).xyz * 2.0 - 1.0;
+
+    // Construct local frame along grass blade
+    let v_up = vec3<f32>(0.0, 1.0, 0.0);
+    var t_blade = cross(in.world_normal, v_up);
+    if (length(t_blade) < 0.01) {
+        t_blade = vec3<f32>(1.0, 0.0, 0.0);
+    } else {
+        t_blade = normalize(t_blade);
+    }
+    let b_blade = cross(in.world_normal, t_blade);
+    let tbn_blade = mat3x3<f32>(t_blade, b_blade, in.world_normal);
+    let perturbed_normal = normalize(tbn_blade * (raw_normal * vec3<f32>(1.5, 1.5, 1.0)));
 
     // Double-sided lighting
-    let normal_dir = select(-in.world_normal, in.world_normal, is_front);
+    let normal_dir = select(-perturbed_normal, perturbed_normal, is_front);
     let light_dir = normalize(camera.light_dir.xyz);
     let view_dir = normalize(camera.camera_pos.xyz - in.world_pos);
 
-    // Shadow calculation
-    var shadow: f32 = 1.0;
-    let shadow_tier = camera.quality_tiers.x;
-    if (shadow_tier > 0u && in.shadow_pos.z >= 0.0 && in.shadow_pos.z <= 1.0) {
-        let texel_size = 1.0 / 2048.0;
-        let bias = 0.0035;
-        let shadow_depth = in.shadow_pos.z - bias;
+    // 2. Vertical Root-to-Tip Contact Occlusion:
+    // Roots of grass blades are tightly clustered and receive only 14% ambient light (deep soil contact shadow).
+    // Tips are open to the sky and receive 100% light.
+    let root_ao = mix(0.14, 1.0, pow(in.height_factor, 1.3));
 
-        if (shadow_tier == 1u) {
-            shadow = textureSampleCompare(t_shadow, s_shadow, in.shadow_pos.xy, shadow_depth);
-        } else {
-            var sum: f32 = 0.0;
-            for (var y = -1; y <= 1; y++) {
-                for (var x = -1; x <= 1; x++) {
-                    let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
-                    sum += textureSampleCompare(t_shadow, s_shadow, in.shadow_pos.xy + offset, shadow_depth);
-                }
-            }
-            shadow = sum / 9.0;
-        }
-    }
+    // Base albedo with organic tint and root contact shadow
+    let albedo = tex_color.rgb * in.color.rgb * root_ao;
 
-    // Ambient
+    // Ambient Lighting
     let gi_tier = camera.quality_tiers.y;
     var ambient_factor: f32 = 0.22;
     if (gi_tier == 1u) {
@@ -209,16 +210,20 @@ fn fs_main(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @location
     } else if (gi_tier >= 2u) {
         ambient_factor = 0.34;
     }
-    let ambient = vec3<f32>(0.20, 0.26, 0.35) * ambient_factor;
+    let ambient = vec3<f32>(0.15, 0.20, 0.28) * (ambient_factor * root_ao);
 
-    // Diffuse with wrap lighting for translucency feel
+    // Sun Diffuse + Subsurface Scattering (Backlight Translucency for thin organic blades)
     let diff = max(dot(normal_dir, light_dir) * 0.65 + 0.35, 0.0);
     let sun_color = vec3<f32>(1.0, 0.98, 0.90);
-    let diffuse = diff * sun_color * shadow;
 
+    let sun_back = max(dot(view_dir, -light_dir), 0.0);
+    let sun_sss = pow(sun_back, 3.0) * in.height_factor * 0.40;
+    let sss_tint = vec3<f32>(0.35, 0.65, 0.15); // Vibrant healthy organic green
+
+    let diffuse = (diff + sun_sss * sss_tint) * sun_color;
     var lit_color = (ambient + diffuse) * albedo;
 
-    // Realistic Flashlight (Double-Sided Translucent Foliage Spotlight)
+    // 3. Realistic Flashlight (Double-Sided Translucent Foliage Spotlight with Waxy Specular Sheen)
     if (camera.flashlight_pos.w > 0.5) {
         let to_light = camera.flashlight_pos.xyz - in.world_pos;
         let dist = length(to_light);
@@ -233,13 +238,23 @@ fn fs_main(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @location
         if (smooth_spot > 0.0) {
             let atten = 1.0 / (1.0 + 0.06 * dist + 0.015 * dist * dist);
             let dist_cutoff = clamp((55.0 - dist) / 12.0, 0.0, 1.0);
-
-            // Wrap lighting for lush translucent grass blades
-            let flash_diff = max(dot(normal_dir, l_dir) * 0.70 + 0.30, 0.0);
             let flash_color = vec3<f32>(1.0, 0.97, 0.88);
             let flash_intensity = camera.flashlight_dir.w * 4.2;
 
-            lit_color += flash_diff * albedo * flash_color * (smooth_spot * atten * dist_cutoff * flash_intensity);
+            // Forward Diffuse
+            let flash_diff = max(dot(normal_dir, l_dir), 0.0);
+
+            // Backlight Translucency / Subsurface Scattering:
+            let flash_back = max(dot(view_dir, -l_dir), 0.0);
+            let flash_sss = pow(flash_back, 2.5) * in.height_factor * 0.55;
+
+            // Waxy Blade Specular Sheen
+            let half_flash = normalize(l_dir + view_dir);
+            let ndoth = max(dot(normal_dir, half_flash), 0.0);
+            let blade_spec = pow(ndoth, 36.0) * in.height_factor * 0.35;
+
+            let total_flash = (flash_diff * albedo + flash_sss * albedo * sss_tint) * root_ao + blade_spec * flash_color;
+            lit_color += total_flash * flash_color * (smooth_spot * atten * dist_cutoff * flash_intensity);
         }
     }
 
@@ -638,7 +653,12 @@ pub fn scatter_chunk_grass(
 
             let rx = local_x / 32.0;
             let rz = local_z / 32.0;
-            let color_tint = [0.92 + rx * 0.14, 1.02, 0.88 + rz * 0.14, 1.0];
+            let color_tint = [
+                0.82 + rx * 0.08,
+                0.88 + rz * 0.08,
+                0.70 + (rx + rz) * 0.08,
+                1.0,
+            ];
 
             if variant_idx < instances_by_variant.len()
                 && instances_by_variant[variant_idx].len()
