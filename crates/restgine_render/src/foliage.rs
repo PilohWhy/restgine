@@ -202,6 +202,25 @@ fn fs_main(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @location
     // Base albedo with organic tint and root contact shadow
     let albedo = tex_color.rgb * in.color.rgb * root_ao;
 
+    // Directional Shadow PCF Filtering
+    var shadow: f32 = 1.0;
+    let shadow_tier = camera.quality_tiers.x;
+    if (shadow_tier > 0u && in.shadow_pos.z >= 0.0 && in.shadow_pos.z <= 1.0) {
+        let bias = 0.0030;
+        let shadow_depth = in.shadow_pos.z - bias;
+        if (shadow_tier == 1u) {
+            shadow = textureSampleCompare(t_shadow, s_shadow, in.shadow_pos.xy, shadow_depth);
+        } else {
+            let texel = 1.0 / 2048.0;
+            shadow = (
+                textureSampleCompare(t_shadow, s_shadow, in.shadow_pos.xy + vec2<f32>(-texel, -texel), shadow_depth) +
+                textureSampleCompare(t_shadow, s_shadow, in.shadow_pos.xy + vec2<f32>(texel, -texel), shadow_depth) +
+                textureSampleCompare(t_shadow, s_shadow, in.shadow_pos.xy + vec2<f32>(-texel, texel), shadow_depth) +
+                textureSampleCompare(t_shadow, s_shadow, in.shadow_pos.xy + vec2<f32>(texel, texel), shadow_depth)
+            ) * 0.25;
+        }
+    }
+
     // Ambient Lighting
     let gi_tier = camera.quality_tiers.y;
     var ambient_factor: f32 = 0.22;
@@ -210,17 +229,17 @@ fn fs_main(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @location
     } else if (gi_tier >= 2u) {
         ambient_factor = 0.34;
     }
-    let ambient = vec3<f32>(0.15, 0.20, 0.28) * (ambient_factor * root_ao);
+    let ambient = vec3<f32>(0.10, 0.16, 0.26) * (ambient_factor * root_ao);
 
     // Sun Diffuse + Subsurface Scattering (Backlight Translucency for thin organic blades)
     let diff = max(dot(normal_dir, light_dir) * 0.65 + 0.35, 0.0);
-    let sun_color = vec3<f32>(1.0, 0.98, 0.90);
+    let sun_color = vec3<f32>(0.85, 0.92, 1.0); // Cold moonlight
 
     let sun_back = max(dot(view_dir, -light_dir), 0.0);
     let sun_sss = pow(sun_back, 3.0) * in.height_factor * 0.40;
     let sss_tint = vec3<f32>(0.35, 0.65, 0.15); // Vibrant healthy organic green
 
-    let diffuse = (diff + sun_sss * sss_tint) * sun_color;
+    let diffuse = (diff * shadow + sun_sss * sss_tint) * sun_color;
     var lit_color = (ambient + diffuse) * albedo;
 
     // 3. Realistic Flashlight (Double-Sided Translucent Foliage Spotlight with Waxy Specular Sheen)
@@ -258,28 +277,17 @@ fn fs_main(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @location
         }
     }
 
-    // Atmospheric Twilight Horizon Fog (Smoothly blends distant grass into sky)
+    // Atmospheric Midnight Horizon Fog
     let dist = length(camera.camera_pos.xyz - in.world_pos);
     let view_dist = camera.settings.w;
     let fog_start = view_dist * 0.40;
     let fog_end = view_dist * 0.88;
     let fog_factor = clamp((dist - fog_start) / (fog_end - fog_start + 0.001), 0.0, 1.0);
     let smooth_fog = fog_factor * fog_factor * (3.0 - 2.0 * fog_factor);
-    let horizon_fog_color = vec3<f32>(0.38, 0.24, 0.28);
+    let horizon_fog_color = vec3<f32>(0.04, 0.07, 0.13);
     lit_color = mix(lit_color, horizon_fog_color, smooth_fog);
 
-    // ACES Tonemapping
-    let a: f32 = 2.51;
-    let b: f32 = 0.03;
-    let c: f32 = 2.43;
-    let d: f32 = 0.59;
-    let e: f32 = 0.14;
-    let tonemapped = clamp((lit_color * (a * lit_color + b)) / (lit_color * (c * lit_color + d) + e), vec3<f32>(0.0), vec3<f32>(1.0));
-
-    let gamma = camera.settings.x;
-    let gamma_corrected = pow(tonemapped, vec3<f32>(1.0 / max(gamma, 0.01)));
-
-    return vec4<f32>(gamma_corrected, tex_color.a);
+    return vec4<f32>(lit_color, tex_color.a);
 }
 "#;
 

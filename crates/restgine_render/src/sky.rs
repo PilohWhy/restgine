@@ -49,15 +49,15 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let sun_dir = normalize(camera.light_dir.xyz);
     let sun_dot = max(dot(ray_dir, sun_dir), 0.0);
 
-    // Atmospheric Dusk / Twilight Gradient
-    // Zenith (straight up): deep rich twilight blue
-    let zenith_color = vec3<f32>(0.03, 0.06, 0.14);
-    // Mid sky: indigo-azure
-    let mid_color = vec3<f32>(0.08, 0.15, 0.28);
-    // Horizon glow: warm sunset/dusk amber & twilight peach
-    let horizon_color = vec3<f32>(0.38, 0.24, 0.28);
+    // Atmospheric Midnight Palette:
+    // Zenith (straight up): deep midnight navy
+    let zenith_color = vec3<f32>(0.01, 0.02, 0.06);
+    // Mid sky: cold deep slate-blue
+    let mid_color = vec3<f32>(0.025, 0.045, 0.09);
+    // Horizon: seamless midnight navy matching terrain/foliage/fog exactly
+    let horizon_color = vec3<f32>(0.04, 0.07, 0.13);
     // Below horizon ground tone
-    let ground_color = vec3<f32>(0.04, 0.06, 0.09);
+    let ground_color = vec3<f32>(0.02, 0.03, 0.05);
 
     let up = ray_dir.y;
     var sky: vec3<f32>;
@@ -70,11 +70,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         sky = mix(horizon_color, ground_color, clamp(-up * 4.0, 0.0, 1.0));
     }
 
-    // Sun / Moon Disc & Atmospheric Halo
-    let sun_disc = smoothstep(0.9985, 0.9995, sun_dot);
-    let sun_halo = pow(sun_dot, 8.0) * 0.45 + pow(sun_dot, 48.0) * 0.85;
-    let sun_light_color = vec3<f32>(1.0, 0.90, 0.75);
-    sky += (sun_disc * 4.0 + sun_halo) * sun_light_color;
+    // Glowing Lunar Disc & Atmospheric Silvery Halo
+    let moon_disc = smoothstep(0.9990, 0.9996, sun_dot);
+    let moon_halo = pow(sun_dot, 16.0) * 0.35 + pow(sun_dot, 64.0) * 0.8;
+    let moon_light_color = vec3<f32>(0.85, 0.92, 1.0);
+    sky += (moon_disc * 5.0 + moon_halo) * moon_light_color;
 
     // Twinkling Starfield in Upper Hemisphere
     if (up > 0.06) {
@@ -88,19 +88,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         }
     }
 
-    // ACES Filmic Tonemapping
-    let a: f32 = 2.51;
-    let b: f32 = 0.03;
-    let c: f32 = 2.43;
-    let d: f32 = 0.59;
-    let e: f32 = 0.14;
-    let tonemapped = clamp((sky * (a * sky + b)) / (sky * (c * sky + d) + e), vec3<f32>(0.0), vec3<f32>(1.0));
-
-    // Dynamic Gamma
-    let gamma = camera.settings.x;
-    let gamma_corrected = pow(tonemapped, vec3<f32>(1.0 / max(gamma, 0.01)));
-
-    return vec4<f32>(gamma_corrected, 1.0);
+    return vec4<f32>(sky, 1.0);
 }
 "#;
 

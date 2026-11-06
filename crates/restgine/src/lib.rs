@@ -53,6 +53,7 @@ pub mod prelude {
         CameraSettingsInput, Mesh3DInstanceRaw, Mesh3DPipeline, Mesh3DVertex,
     };
     pub use restgine_render::pipeline::{CameraUniform, SpritePipeline};
+    pub use restgine_render::postprocess::PostProcessPipeline;
     pub use restgine_render::sky::SkyPipeline;
     pub use restgine_render::terrain::{
         terrain_height, terrain_normal, TerrainChunkInstance, TerrainPipeline, TerrainVertex,

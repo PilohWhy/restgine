@@ -6,6 +6,7 @@ pub mod foliage;
 pub mod forest;
 pub mod mesh3d;
 pub mod pipeline;
+pub mod postprocess;
 pub mod sky;
 pub mod terrain;
 pub mod visbuffer;
@@ -22,6 +23,7 @@ pub use forest::{
 };
 pub use mesh3d::{Mesh3DInstanceRaw, Mesh3DPipeline, Mesh3DVertex};
 pub use pipeline::{CameraUniform, SpritePipeline};
+pub use postprocess::PostProcessPipeline;
 pub use sky::SkyPipeline;
 pub use terrain::{
     terrain_height, terrain_normal, TerrainChunkInstance, TerrainPipeline, TerrainVertex,

@@ -112,7 +112,19 @@ struct VertexOutput {
     @location(2) uv: vec2<f32>,
     @location(3) color: vec4<f32>,
     @location(4) height: f32,
+    @location(5) shadow_pos: vec3<f32>,
 };
+
+@vertex
+fn vs_shadow(in: VertexInput, inst: InstanceInput) -> @builtin(position) vec4<f32> {
+    let model = mat4x4<f32>(inst.model_0, inst.model_1, inst.model_2, inst.model_3);
+    let world_pos = (model * vec4<f32>(in.position, 1.0)).xyz;
+    let height_factor = clamp(in.position.y / 16.0, 0.0, 1.0);
+    let time = camera.settings.y;
+    let sway = sin(time * 1.8 + world_pos.x * 0.15 + world_pos.z * 0.12) * (height_factor * height_factor * 0.08);
+    let final_world_pos = world_pos + vec3<f32>(sway, 0.0, sway * 0.6);
+    return camera.light_view_proj * vec4<f32>(final_world_pos, 1.0);
+}
 
 @vertex
 fn vs_bark(in: VertexInput, inst: InstanceInput) -> VertexOutput {
@@ -132,6 +144,15 @@ fn vs_bark(in: VertexInput, inst: InstanceInput) -> VertexOutput {
     out.uv = in.uv;
     out.color = inst.color_tint;
     out.height = in.position.y;
+
+    // Transform to shadow map space [-1..1] -> [0..1]
+    let shadow_clip = camera.light_view_proj * vec4<f32>(final_world_pos, 1.0);
+    out.shadow_pos = vec3<f32>(
+        shadow_clip.x * 0.5 + 0.5,
+        -shadow_clip.y * 0.5 + 0.5,
+        shadow_clip.z
+    );
+
     return out;
 }
 
@@ -151,11 +172,39 @@ fn fs_bark(in: VertexOutput) -> @location(0) vec4<f32> {
     let light_dir = normalize(camera.light_dir.xyz);
     let view_dir = normalize(camera.camera_pos.xyz - in.world_pos);
 
-    // Ambient + Sun Diffuse
+    // Directional Shadow PCF sampling
+    var shadow: f32 = 1.0;
+    let shadow_tier = camera.quality_tiers.x;
+    if (shadow_tier > 0u && in.shadow_pos.x >= 0.0 && in.shadow_pos.x <= 1.0 && in.shadow_pos.y >= 0.0 && in.shadow_pos.y <= 1.0 && in.shadow_pos.z >= 0.0 && in.shadow_pos.z <= 1.0) {
+        let texel_size = 1.0 / 2048.0;
+        let bias = 0.003;
+        let shadow_depth = in.shadow_pos.z - bias;
+
+        if (shadow_tier == 1u) {
+            shadow = textureSampleCompare(t_shadow, s_shadow, in.shadow_pos.xy, shadow_depth);
+        } else {
+            var sum: f32 = 0.0;
+            for (var y = -1; y <= 1; y++) {
+                for (var x = -1; x <= 1; x++) {
+                    let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
+                    sum += textureSampleCompare(t_shadow, s_shadow, in.shadow_pos.xy + offset, shadow_depth);
+                }
+            }
+            shadow = sum / 9.0;
+        }
+    }
+
+    // Ambient + Moonlight Diffuse with Shadow
     let ambient = vec3<f32>(0.15, 0.18, 0.25) * 0.24;
     let diff = max(dot(normal, light_dir), 0.0);
-    let sun_color = vec3<f32>(1.0, 0.98, 0.90);
-    var lit_color = (ambient + diff * sun_color) * albedo;
+    let sun_color = vec3<f32>(0.85, 0.92, 1.0); // Cold moonlight
+    var lit_color = (ambient + diff * sun_color * shadow) * albedo;
+
+    // Wet Bark Specular Sheen (Rain / Dew)
+    let half_dir = normalize(light_dir + view_dir);
+    let ndoth = max(dot(normal, half_dir), 0.0);
+    let bark_spec = pow(ndoth, 32.0) * 0.22 * shadow;
+    lit_color += bark_spec * sun_color;
 
     // Flashlight Spot
     if (camera.flashlight_pos.w > 0.5) {
@@ -176,29 +225,25 @@ fn fs_bark(in: VertexOutput) -> @location(0) vec4<f32> {
             let flash_color = vec3<f32>(1.0, 0.97, 0.88);
             let flash_intensity = camera.flashlight_dir.w * 4.2;
 
-            lit_color += flash_diff * albedo * flash_color * (smooth_spot * atten * dist_cutoff * flash_intensity);
+            let half_flash = normalize(l_dir + view_dir);
+            let flash_ndoth = max(dot(normal, half_flash), 0.0);
+            let flash_spec = pow(flash_ndoth, 36.0) * 0.35;
+
+            lit_color += (flash_diff * albedo + flash_spec * flash_color) * flash_color * (smooth_spot * atten * dist_cutoff * flash_intensity);
         }
     }
 
-    // Horizon Fog
+    // Atmospheric Midnight Horizon Fog
     let dist = length(camera.camera_pos.xyz - in.world_pos);
     let view_dist = camera.settings.w;
     let fog_start = view_dist * 0.40;
     let fog_end = view_dist * 0.88;
     let fog_factor = clamp((dist - fog_start) / (fog_end - fog_start + 0.001), 0.0, 1.0);
     let smooth_fog = fog_factor * fog_factor * (3.0 - 2.0 * fog_factor);
-    let horizon_fog_color = vec3<f32>(0.38, 0.24, 0.28);
+    let horizon_fog_color = vec3<f32>(0.04, 0.07, 0.13);
     lit_color = mix(lit_color, horizon_fog_color, smooth_fog);
 
-    // ACES Tonemapping + Gamma
-    let a: f32 = 2.51;
-    let b_const: f32 = 0.03;
-    let c: f32 = 2.43;
-    let d: f32 = 0.59;
-    let e: f32 = 0.14;
-    let tonemapped = clamp((lit_color * (a * lit_color + b_const)) / (lit_color * (c * lit_color + d) + e), vec3<f32>(0.0), vec3<f32>(1.0));
-    let gamma = camera.settings.x;
-    return vec4<f32>(pow(tonemapped, vec3<f32>(1.0 / max(gamma, 0.01))), 1.0);
+    return vec4<f32>(lit_color, 1.0);
 }
 
 @vertex
@@ -221,6 +266,15 @@ fn vs_leaf(in: VertexInput, inst: InstanceInput) -> VertexOutput {
     out.uv = in.uv;
     out.color = inst.color_tint;
     out.height = in.position.y;
+
+    // Transform to shadow map space [-1..1] -> [0..1]
+    let shadow_clip = camera.light_view_proj * vec4<f32>(final_world_pos, 1.0);
+    out.shadow_pos = vec3<f32>(
+        shadow_clip.x * 0.5 + 0.5,
+        -shadow_clip.y * 0.5 + 0.5,
+        shadow_clip.z
+    );
+
     return out;
 }
 
@@ -244,17 +298,45 @@ fn fs_leaf(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @location
     let light_dir = normalize(camera.light_dir.xyz);
     let view_dir = normalize(camera.camera_pos.xyz - in.world_pos);
 
+    // Directional Shadow PCF sampling
+    var shadow: f32 = 1.0;
+    let shadow_tier = camera.quality_tiers.x;
+    if (shadow_tier > 0u && in.shadow_pos.x >= 0.0 && in.shadow_pos.x <= 1.0 && in.shadow_pos.y >= 0.0 && in.shadow_pos.y <= 1.0 && in.shadow_pos.z >= 0.0 && in.shadow_pos.z <= 1.0) {
+        let texel_size = 1.0 / 2048.0;
+        let bias = 0.003;
+        let shadow_depth = in.shadow_pos.z - bias;
+
+        if (shadow_tier == 1u) {
+            shadow = textureSampleCompare(t_shadow, s_shadow, in.shadow_pos.xy, shadow_depth);
+        } else {
+            var sum: f32 = 0.0;
+            for (var y = -1; y <= 1; y++) {
+                for (var x = -1; x <= 1; x++) {
+                    let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
+                    sum += textureSampleCompare(t_shadow, s_shadow, in.shadow_pos.xy + offset, shadow_depth);
+                }
+            }
+            shadow = sum / 9.0;
+        }
+    }
+
     // Leaf Ambient + Double-Sided Sun Diffuse + Subsurface Scattering
     let ambient = vec3<f32>(0.14, 0.20, 0.26) * 0.28;
     let diff = max(dot(normal_dir, light_dir) * 0.65 + 0.35, 0.0);
-    let sun_color = vec3<f32>(1.0, 0.98, 0.90);
+    let sun_color = vec3<f32>(0.85, 0.92, 1.0);
 
     // Subsurface Scattering (Backlight leaf glow)
     let sun_back = max(dot(view_dir, -light_dir), 0.0);
     let sun_sss = pow(sun_back, 3.0) * 0.45;
     let sss_tint = vec3<f32>(0.35, 0.65, 0.15);
 
-    var lit_color = (ambient + (diff + sun_sss * sss_tint) * sun_color) * albedo;
+    var lit_color = (ambient + (diff + sun_sss * sss_tint) * sun_color * shadow) * albedo;
+
+    // Wet Leaf Specular Sheen from Moon
+    let half_moon = normalize(light_dir + view_dir);
+    let moon_ndoth = max(dot(normal_dir, half_moon), 0.0);
+    let moon_spec = pow(moon_ndoth, 24.0) * 0.20 * shadow;
+    lit_color += moon_spec * sun_color;
 
     // Realistic Flashlight (with Subsurface Translucency & Waxy Sheen)
     if (camera.flashlight_pos.w > 0.5) {
@@ -287,31 +369,24 @@ fn fs_leaf(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @location
         }
     }
 
-    // Horizon Fog
+    // Atmospheric Midnight Horizon Fog
     let dist = length(camera.camera_pos.xyz - in.world_pos);
     let view_dist = camera.settings.w;
     let fog_start = view_dist * 0.40;
     let fog_end = view_dist * 0.88;
     let fog_factor = clamp((dist - fog_start) / (fog_end - fog_start + 0.001), 0.0, 1.0);
     let smooth_fog = fog_factor * fog_factor * (3.0 - 2.0 * fog_factor);
-    let horizon_fog_color = vec3<f32>(0.38, 0.24, 0.28);
+    let horizon_fog_color = vec3<f32>(0.04, 0.07, 0.13);
     lit_color = mix(lit_color, horizon_fog_color, smooth_fog);
 
-    // ACES Tonemapping + Gamma
-    let a: f32 = 2.51;
-    let b_const: f32 = 0.03;
-    let c: f32 = 2.43;
-    let d: f32 = 0.59;
-    let e: f32 = 0.14;
-    let tonemapped = clamp((lit_color * (a * lit_color + b_const)) / (lit_color * (c * lit_color + d) + e), vec3<f32>(0.0), vec3<f32>(1.0));
-    let gamma = camera.settings.x;
-    return vec4<f32>(pow(tonemapped, vec3<f32>(1.0 / max(gamma, 0.01))), tex_color.a);
+    return vec4<f32>(lit_color, tex_color.a);
 }
 "#;
 
 pub struct ForestPipeline {
     pub bark_pipeline: wgpu::RenderPipeline,
     pub leaf_pipeline: wgpu::RenderPipeline,
+    pub shadow_pipeline: wgpu::RenderPipeline,
     pub vertex_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,
     pub variants: Vec<ForestVariant>,
@@ -678,6 +753,61 @@ impl ForestPipeline {
             cache: None,
         });
 
+        // Shadow Pass Pipeline
+        let shadow_camera_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Forest Shadow Camera Bind Group Layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+
+        let shadow_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Forest Shadow Pipeline Layout"),
+                bind_group_layouts: &[&shadow_camera_bind_group_layout],
+                push_constant_ranges: &[],
+            });
+
+        let shadow_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Forest Shadow Pipeline"),
+            layout: Some(&shadow_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: "vs_shadow",
+                buffers: &vertex_layouts,
+                compilation_options: Default::default(),
+            },
+            fragment: None,
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None, // Shadow from all faces
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: crate::mesh3d::Mesh3DPipeline::SHADOW_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState {
+                    constant: 2,
+                    slope_scale: 2.0,
+                    clamp: 0.0,
+                },
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
         // 4. Per-variant instance buffers
         let mut instance_buffers = Vec::with_capacity(variants.len());
         for _ in 0..variants.len() {
@@ -693,6 +823,7 @@ impl ForestPipeline {
         Ok(Self {
             bark_pipeline,
             leaf_pipeline,
+            shadow_pipeline,
             vertex_buffer,
             index_buffer,
             variants,
@@ -795,6 +926,47 @@ impl ForestPipeline {
                 variant.leaf_range.vertex_offset as i32,
                 0..count,
             );
+        }
+    }
+
+    pub fn render_shadow<'a>(
+        &'a self,
+        rpass: &mut wgpu::RenderPass<'a>,
+        shadow_camera_bind_group: &'a wgpu::BindGroup,
+        variant_counts: &[usize],
+    ) {
+        rpass.set_pipeline(&self.shadow_pipeline);
+        rpass.set_bind_group(0, shadow_camera_bind_group, &[]);
+        rpass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+        rpass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+
+        for (variant_idx, variant) in self.variants.iter().enumerate() {
+            let count = if variant_idx < variant_counts.len() {
+                variant_counts[variant_idx].min(self.max_instances_per_variant) as u32
+            } else {
+                0
+            };
+            if count == 0 {
+                continue;
+            }
+
+            rpass.set_vertex_buffer(1, self.instance_buffers[variant_idx].slice(..));
+
+            if variant.bark_range.index_count > 0 {
+                rpass.draw_indexed(
+                    variant.bark_range.index_offset..(variant.bark_range.index_offset + variant.bark_range.index_count),
+                    variant.bark_range.vertex_offset as i32,
+                    0..count,
+                );
+            }
+
+            if variant.leaf_range.index_count > 0 {
+                rpass.draw_indexed(
+                    variant.leaf_range.index_offset..(variant.leaf_range.index_offset + variant.leaf_range.index_count),
+                    variant.leaf_range.vertex_offset as i32,
+                    0..count,
+                );
+            }
         }
     }
 }

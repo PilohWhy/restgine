@@ -205,22 +205,30 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let grass_contact = clamp(clump_shadow_pattern * 0.35 + 0.75, 0.45, 1.0);
     let final_ao = crevice_ao * grass_contact;
 
-    let ambient = vec3<f32>(0.16, 0.20, 0.28) * (ambient_factor * final_ao);
+    // PBR Wetness, Rain Mud & Puddles (Depressions hold water, giving glassy reflections)
+    let puddle_depth = clamp((0.44 - height) * 8.0, 0.0, 1.0);
+    let surface_albedo = mix(albedo, albedo * 0.40, puddle_depth * 0.82);
+    let surface_roughness = mix(roughness, 0.04, puddle_depth * 0.94);
+    let f0 = mix(0.04, 0.02, puddle_depth);
+
+    let ambient = vec3<f32>(0.10, 0.16, 0.26) * (ambient_factor * final_ao);
 
     // 4. Diffuse & PBR GGX Specular
     let diff = max(dot(normal, light_dir), 0.0);
-    let sun_color = vec3<f32>(1.0, 0.98, 0.92);
+    let sun_color = vec3<f32>(0.85, 0.92, 1.0); // Cold moonlight
     let diffuse = diff * sun_color * shadow * final_ao;
 
     let half_dir = normalize(light_dir + view_dir);
     let ndoth = max(dot(normal, half_dir), 0.0);
-    let spec_power = mix(64.0, 8.0, roughness);
-    let spec = pow(ndoth, spec_power) * (1.0 - roughness * 0.7) * shadow * final_ao;
-    let specular = spec * vec3<f32>(0.15, 0.15, 0.15);
+    let vdoth = max(dot(view_dir, half_dir), 0.0);
+    let fresnel = f0 + (1.0 - f0) * pow(1.0 - vdoth, 5.0);
+    let spec_power = mix(16.0, 140.0, 1.0 - surface_roughness);
+    let spec = pow(ndoth, spec_power) * fresnel * shadow * final_ao * (1.2 + puddle_depth * 3.0);
+    let specular = spec * sun_color;
 
-    var lit_color = (ambient + diffuse) * albedo + specular;
+    var lit_color = (ambient + diffuse) * surface_albedo + specular;
 
-    // 5. Realistic Flashlight with Tactile Crevice Self-Shadowing
+    // 5. Realistic Flashlight with Wet Specular Glint & Crevice Self-Shadowing
     if (camera.flashlight_pos.w > 0.5) {
         let to_light = camera.flashlight_pos.xyz - in.world_pos;
         let dist = length(to_light);
@@ -242,36 +250,26 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
             let half_flash = normalize(l_dir + view_dir);
             let flash_ndoth = max(dot(normal, half_flash), 0.0);
-            let flash_spec = pow(flash_ndoth, mix(20.0, 80.0, 1.0 - roughness)) * (1.0 - roughness * 0.4);
+            let flash_vdoth = max(dot(view_dir, half_flash), 0.0);
+            let flash_fresnel = f0 + (1.0 - f0) * pow(1.0 - flash_vdoth, 5.0);
+            let flash_spec_exp = mix(18.0, 180.0, 1.0 - surface_roughness);
+            let flash_spec = pow(flash_ndoth, flash_spec_exp) * flash_fresnel * (1.6 + puddle_depth * 4.5);
 
-            // Multiply by final_ao so under the flashlight, crevices and grass shadows stay dark!
-            lit_color += (flash_diff * albedo * final_ao + flash_spec * vec3<f32>(0.22) * final_ao) * flash_color * (smooth_spot * atten * dist_cutoff * flash_intensity);
+            lit_color += (flash_diff * surface_albedo * final_ao + flash_spec * flash_color * final_ao) * flash_color * (smooth_spot * atten * dist_cutoff * flash_intensity);
         }
     }
 
-    // 6. Atmospheric Twilight Horizon Fog (Smoothly eliminates chunk boundary teeth)
+    // 6. Atmospheric Midnight Horizon Fog
     let dist = length(camera.camera_pos.xyz - in.world_pos);
     let view_dist = camera.settings.w;
     let fog_start = view_dist * 0.40;
     let fog_end = view_dist * 0.88;
     let fog_factor = clamp((dist - fog_start) / (fog_end - fog_start + 0.001), 0.0, 1.0);
     let smooth_fog = fog_factor * fog_factor * (3.0 - 2.0 * fog_factor);
-    let horizon_fog_color = vec3<f32>(0.38, 0.24, 0.28);
+    let horizon_fog_color = vec3<f32>(0.04, 0.07, 0.13);
     lit_color = mix(lit_color, horizon_fog_color, smooth_fog);
 
-    // 7. ACES Filmic Tonemapping
-    let a: f32 = 2.51;
-    let b: f32 = 0.03;
-    let c: f32 = 2.43;
-    let d: f32 = 0.59;
-    let e: f32 = 0.14;
-    let tonemapped = clamp((lit_color * (a * lit_color + b)) / (lit_color * (c * lit_color + d) + e), vec3<f32>(0.0), vec3<f32>(1.0));
-
-    // Dynamic Gamma
-    let gamma = camera.settings.x;
-    let gamma_corrected = pow(tonemapped, vec3<f32>(1.0 / max(gamma, 0.01)));
-
-    return vec4<f32>(gamma_corrected, 1.0);
+    return vec4<f32>(lit_color, 1.0);
 }
 "#;
 
