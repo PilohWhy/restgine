@@ -35,7 +35,10 @@ fn run_windowed_demo(
     mut window_ctx: WindowContext,
     duration_secs: u64,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let event_loop = window_ctx.event_loop.take().ok_or("EventLoop already taken")?;
+    let event_loop = window_ctx
+        .event_loop
+        .take()
+        .ok_or("EventLoop already taken")?;
     let device = &window_ctx.device;
     let queue = &window_ctx.queue;
     let surface = &window_ctx.surface;
