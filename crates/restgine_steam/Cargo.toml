@@ -1,0 +1,12 @@
+[package]
+name = "restgine_steam"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Native Steamworks SDK & Steam Deck integration for Restgine"
+
+[dependencies]
+steamworks.workspace = true
+log.workspace = true
+thiserror.workspace = true

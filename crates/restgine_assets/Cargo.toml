@@ -1,0 +1,15 @@
+[package]
+name = "restgine_assets"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Aseprite, LDtk, texture atlas, and VFS (.pak) asset pipeline for Restgine"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+image.workspace = true
+thiserror.workspace = true
+log.workspace = true
+glam.workspace = true

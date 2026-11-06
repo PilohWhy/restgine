@@ -1,0 +1,12 @@
+[package]
+name = "restgine_ecs"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Lightweight 2.5D archetype ECS built on hecs for Restgine"
+
+[dependencies]
+hecs.workspace = true
+glam.workspace = true
+serde.workspace = true

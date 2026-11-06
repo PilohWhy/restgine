@@ -1,0 +1,28 @@
+[package]
+name = "restgine_cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Command line interface and standalone runtime for Restgine"
+
+[[bin]]
+name = "restgine"
+path = "src/main.rs"
+
+[dependencies]
+restgine_core.workspace = true
+restgine_ecs.workspace = true
+restgine_physics.workspace = true
+restgine_render.workspace = true
+restgine_audio.workspace = true
+restgine_assets.workspace = true
+restgine_luau.workspace = true
+restgine_steam.workspace = true
+clap.workspace = true
+notify.workspace = true
+env_logger.workspace = true
+log.workspace = true
+hecs.workspace = true
+glam.workspace = true
+image.workspace = true

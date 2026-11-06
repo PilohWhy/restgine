@@ -1,0 +1,20 @@
+[package]
+name = "restgine_luau"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "High-performance Luau scripting runtime and FFI bindings for Restgine"
+
+[dependencies]
+restgine_core.workspace = true
+restgine_ecs.workspace = true
+restgine_physics.workspace = true
+restgine_render.workspace = true
+restgine_audio.workspace = true
+restgine_steam.workspace = true
+mlua.workspace = true
+glam.workspace = true
+hecs.workspace = true
+log.workspace = true
+thiserror.workspace = true

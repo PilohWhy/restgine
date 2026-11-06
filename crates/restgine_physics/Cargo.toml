@@ -1,0 +1,13 @@
+[package]
+name = "restgine_physics"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "High-performance 2.5D Footprint physics & Spatial Hash Grid for Restgine"
+
+[dependencies]
+restgine_ecs.workspace = true
+glam.workspace = true
+hecs.workspace = true
+log.workspace = true

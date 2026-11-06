@@ -1,0 +1,17 @@
+[package]
+name = "restgine_render"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "wgpu 2.5D Isaac-style Y-sorting sprite batch renderer for Restgine"
+
+[dependencies]
+restgine_core.workspace = true
+restgine_ecs.workspace = true
+wgpu.workspace = true
+bytemuck.workspace = true
+glam.workspace = true
+log.workspace = true
+hecs.workspace = true
+image.workspace = true

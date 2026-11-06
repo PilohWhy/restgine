@@ -1,0 +1,22 @@
+# Rust / Cargo
+/target/
+**/*.rs.bk
+*.pdb
+Cargo.lock
+
+# Asset builds and caches
+/dist/
+*.pak
+.restgine/
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Steamworks local files
+steam_appid.txt

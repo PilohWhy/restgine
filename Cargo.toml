@@ -1,0 +1,65 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/restgine_core",
+    "crates/restgine_ecs",
+    "crates/restgine_physics",
+    "crates/restgine_render",
+    "crates/restgine_audio",
+    "crates/restgine_assets",
+    "crates/restgine_luau",
+    "crates/restgine_steam",
+    "crates/restgine_cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["PilohWhy <160339064+PilohWhy@users.noreply.github.com>", "Restgine Contributors"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/PilohWhy/restgine"
+homepage = "https://github.com/PilohWhy/restgine"
+readme = "README.md"
+keywords = ["game-engine", "2d", "isometric", "steam", "pixel-art"]
+categories = ["game-engines"]
+
+[workspace.dependencies]
+# Serialization & Utilities
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+thiserror = "1.0"
+log = "0.4"
+env_logger = "0.11"
+bytemuck = { version = "1.18", features = ["derive"] }
+glam = { version = "0.29", features = ["serde"] }
+
+# ECS & Data
+hecs = { version = "0.10", features = ["serde"] }
+
+# Platform & Rendering
+wgpu = { version = "22.0" }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+
+# Audio
+rodio = { version = "0.19", default-features = false, features = ["wav", "vorbis"] }
+
+# Scripting
+mlua = { version = "0.9", features = ["luau", "vendored"] }
+
+# Steam
+steamworks = "0.13.1"
+
+# CLI & Tooling
+clap = { version = "4.5", features = ["derive"] }
+notify = "6.1"
+
+# Internal Workspace Crates
+restgine_core = { path = "crates/restgine_core" }
+restgine_ecs = { path = "crates/restgine_ecs" }
+restgine_physics = { path = "crates/restgine_physics" }
+restgine_render = { path = "crates/restgine_render" }
+restgine_audio = { path = "crates/restgine_audio" }
+restgine_assets = { path = "crates/restgine_assets" }
+restgine_luau = { path = "crates/restgine_luau" }
+restgine_steam = { path = "crates/restgine_steam" }

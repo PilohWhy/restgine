@@ -1,0 +1,13 @@
+[package]
+name = "restgine_audio"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Spatial 2.5D audio engine for Restgine"
+
+[dependencies]
+rodio.workspace = true
+glam.workspace = true
+log.workspace = true
+thiserror.workspace = true
