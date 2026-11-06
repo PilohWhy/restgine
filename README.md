@@ -6,11 +6,11 @@
 [![Discord](https://img.shields.io/badge/Discord-Join%20Community-5865F2?logo=discord&logoColor=white)](https://discord.gg/restgine)
 [![License](https://img.shields.io/badge/License-Modified%20MIT%20%2B%20Attribution-blue.svg)](LICENSE)
 
-Restgine is a code-first 2D/3D continuum game engine written in pure Rust for Steam and the Steam Deck.
+Restgine is a revolutionary code-first 2D/3D continuum game engine built from the ground up in pure Rust.
 
-I started Restgine as a solo systems project because general-purpose engines like Unity and Godot struggle when you push past a few thousand moving entities. Garbage collection pauses, deep node hierarchies, and full-screen material passes introduce frame drops on modest hardware. Restgine strips away those layers. It provides a single coordinate space where 2D sprites, Isaac-style 2.5D elevation physics, and full 3D meshes run through the same branchless SIMD routines.
+General-purpose engines like Unity, Godot, and Unreal struggle when pushing past a few thousand moving entities. Garbage collection pauses, deep scene graph traversals, and full-screen material passes introduce severe frame drops even on modern hardware. Restgine eliminates those bottlenecks at the architectural level. It introduces a unified coordinate space where 2D sprites, Isaac-style 2.5D elevation physics, and full 3D meshes run through the exact same branchless SIMD pipelines with zero heap allocations during the game loop.
 
-There is no graphical editor. You write code in your text editor, draw sprites in Aseprite, model in Blender, and run the game through the `restgine` CLI with sub-100ms hot-reloading.
+There is no heavy graphical editor. You write code in your text editor, draw sprites in Aseprite, model in Blender, and run everything through the `restgine` CLI with sub-100ms hot-reloading.
 
 [Developer Guide](docs/DEVELOPER_GUIDE.md) &bull; [Contributing](CONTRIBUTING.md) &bull; [Releases](https://github.com/PilohWhy/restgine/releases)
 
@@ -27,44 +27,25 @@ Measurements were captured on physical hardware running native uncapped simulati
 - **OS**: Windows 11 Pro 64-bit
 - **Toolchain**: rustc 1.80+ (release profile: `opt-level = 3`, `lto = "fat"`, `codegen-units = 1`, `panic = "abort"`)
 
-![Frametime Latency Comparison at 10,000 Entities](docs/benchmark_chart.png)
+![Uncapped Framerate Comparison at 10,000 Entities](docs/benchmark_chart.png)
 
-### Simulation Latency & Throughput
+### Uncapped Framerate Comparison (10,000 Active Entities)
 
-```
-restgine benchmark --entities 10000 --duration 5 --dimension 3d
+Higher is better:
+- **Restgine (Rust XPBD + BVH8)**: **4,798 FPS** (~0.21 ms frame time)
+- **Godot 4 (C# SceneGraph)**: **59 FPS** (~16.80 ms frame time)
+- **Unity 6 (Mono GameObjects)**: **54 FPS** (~18.40 ms frame time)
+- **Unreal Engine 5 (C++ UObject)**: **44 FPS** (~22.40 ms frame time)
 
-=========================================================
-             BENCHMARK RESULTS & THROUGHPUT              
-=========================================================
- Simulated Entities:              10000
- Dimension Pipeline:       Full3D
- Total Frames Rendered:           23990
- Elapsed Time:                   5.00 s
- Uncapped Average FPS:         4798.0 FPS
- Average Frame Time:           208.35 µs (0.208 ms)
- 1% Low FPS (P99 Latency):     3034.9 FPS
- Min / Max Frame Time:       189.10 µs / 5037.40 µs
- Entity Update Throughput:      47.98 Million entities/sec
- Heap Allocs in Game Loop:            0 bytes (Verified Zero)
-=========================================================
-```
+### Framerate Scaling by Entity Count
 
-### Comparative Scale
-
-| Entity Count | Solver / Pipeline | Frame Latency | Uncapped Framerate | Throughput | Heap Allocs |
+| Entity Count | Pipeline | Uncapped Framerate | Frame Latency | Entity Throughput | Heap Allocs |
 |---|---|---|---|---|---|
-| 1,000 | Full 3D XPBD | 20.33 µs | 49,059 FPS | 49.06 M entities/s | 0 Bytes |
-| 10,000 | Full 3D XPBD | 208.35 µs | 4,798 FPS | 47.98 M entities/s | 0 Bytes |
-| 50,000 | Full 3D XPBD | 1,987.91 µs | 503 FPS | 25.15 M entities/s | 0 Bytes |
-| 100,000 | Isometric 2.5D | 6,102.39 µs | 163 FPS | 16.39 M entities/s | 0 Bytes |
-| Mixed Demo | 2D/3D Continuum | 1.00 µs | 980,000+ FPS | Multi-Million / s | 0 Bytes |
-
-Frametime cost at 10,000 active moving bodies:
-- **Restgine (Rust XPBD + BVH8)**: ~0.21 ms (4,798 FPS)
-- **Godot 4 (C# SceneGraph)**: ~16.80 ms (59 FPS)
-- **Unity 6 (Mono GameObjects)**: ~18.40 ms (54 FPS)
-- **Unreal Engine 5 (C++ UObject)**: ~22.40 ms (44 FPS)
+| 1,000 | Full 3D XPBD | **49,059 FPS** | 20.33 µs | 49.06 M entities/s | 0 Bytes |
+| 10,000 | Full 3D XPBD | **4,798 FPS** | 208.35 µs | 47.98 M entities/s | 0 Bytes |
+| 50,000 | Full 3D XPBD | **503 FPS** | 1,987.91 µs | 25.15 M entities/s | 0 Bytes |
+| 100,000 | Isometric 2.5D | **163 FPS** | 6,102.39 µs | 16.39 M entities/s | 0 Bytes |
+| Mixed Demo | 2D/3D Continuum | **980,000+ FPS** | 1.00 µs | Multi-Million / s | 0 Bytes |
 
 ---
 
@@ -75,7 +56,7 @@ Frametime cost at 10,000 active moving bodies:
 - **Reversed-Z Floating Point Depth**: Infinite perspective projection mapping depth from near=1.0 to far=0.0. This grants uniform precision across distances and eliminates Z-fighting.
 - **Sub-Stepped XPBD & BVH8 Broadphase**: Extended Position-Based Dynamics solved over continuous time steps with an 8-way SIMD BVH broadphase. Runs with zero heap allocations during collision resolution.
 - **16MB Thread-Local Linear Arenas**: Eliminates runtime heap `malloc` and `free` operations during active gameplay frames. Frame scratchpads reset in O(1).
-- **Steamworks SDK**: Built-in support for Steam Input, Cloud Saves (`ISteamRemoteStorage`), achievements, and Steam Deck detection.
+- **Platform & Input Abstractions**: Native gamepad mapping, high-speed spatial audio, save persistence hooks, and low-latency input polling.
 
 ```mermaid
 flowchart TD
@@ -86,7 +67,7 @@ flowchart TD
     ECS --> VisBuffer["64-bit Visibility Buffer (wgpu)"]
     VisBuffer --> Shading["Deferred Compute Shading"]
     Shading --> GPU["Vulkan / Metal / DirectX 12"]
-    Steam["Steamworks SDK"] <--> Runtime["Restgine Continuum Runtime"]
+    Platform["Platform & Input API"] <--> Runtime["Restgine Continuum Runtime"]
 ```
 
 ---
@@ -147,7 +128,7 @@ crates/
 ├── restgine_render/     # 64-bit Visibility Buffer pipeline, Reversed-Z 3D camera
 ├── restgine_audio/      # rodio-powered spatial audio engine and sample cache
 ├── restgine_assets/     # Aseprite loader, texture atlas builder, and .pak packer
-├── restgine_steam/      # Steamworks SDK, Steam Input, Cloud Saves, Deck detection
+├── restgine_steam/      # Platform abstraction layer (gamepad input, cloud saves, achievements)
 ├── restgine_luau/       # Luau runtime, bindings, and automated type generator
 └── restgine_cli/        # CLI tool (init, dev, build, demo, benchmark)
 ```
@@ -156,7 +137,7 @@ crates/
 
 ## Documentation
 
-- [Developer Guide](docs/DEVELOPER_GUIDE.md): ECS components, writing Luau scripts, camera setup, and building for Steam.
+- [Developer Guide](docs/DEVELOPER_GUIDE.md): ECS components, writing Luau scripts, camera setup, and building games.
 - [Contributor Guide](CONTRIBUTING.md): Architectural invariants, code style, testing, and PR workflow.
 
 ---
