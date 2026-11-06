@@ -6,7 +6,9 @@ use restgine_core::ThreadScratchpad;
 use restgine_render::foliage::{scatter_chunk_grass, FoliagePipeline, GrassInstanceRaw};
 use restgine_render::mesh3d::CameraSettingsInput;
 use restgine_render::terrain::{terrain_height, TerrainChunkInstance, TerrainPipeline};
-use restgine_render::{Camera3D, Mesh3DPipeline, SpriteInstanceRaw, SpritePipeline, WindowContext};
+use restgine_render::{
+    Camera3D, Mesh3DPipeline, SkyPipeline, SpriteInstanceRaw, SpritePipeline, WindowContext,
+};
 use settings_ui::{create_font_atlas_texture, GameSettings, QualityTier, SettingsUI};
 use std::time::Instant;
 use winit::event::{DeviceEvent, ElementState, Event, KeyEvent, MouseButton, WindowEvent};
@@ -27,6 +29,82 @@ const GRASS_ATLAS_ALBEDO_BYTES: &[u8] =
     include_bytes!("../../../assets/models/grass/grass_atlas_albedo.png");
 const GRASS_ATLAS_NORMAL_BYTES: &[u8] =
     include_bytes!("../../../assets/models/grass/grass_atlas_normal.png");
+
+/// Dynamic first-person flashlight with organic inertia, breathing sway, and walking bobbing.
+struct FlashlightState {
+    pub is_on: bool,
+    pub current_pos: Vec3,
+    pub current_dir: Vec3,
+    pub bob_time: f32,
+    pub sway_time: f32,
+}
+
+impl FlashlightState {
+    fn new(spawn_pos: Vec3, initial_dir: Vec3) -> Self {
+        Self {
+            is_on: true,
+            current_pos: spawn_pos,
+            current_dir: initial_dir,
+            bob_time: 0.0,
+            sway_time: 0.0,
+        }
+    }
+
+    fn update(
+        &mut self,
+        dt: f32,
+        camera_eye: Vec3,
+        camera_look_dir: Vec3,
+        is_moving: bool,
+        is_sprinting: bool,
+    ) {
+        self.sway_time += dt;
+
+        let world_up = Vec3::Y;
+        let right = camera_look_dir.cross(world_up).normalize_or_zero();
+        let up = right.cross(camera_look_dir).normalize_or_zero();
+
+        // 1. Walking / Running Bobbing
+        if is_moving {
+            let bob_speed = if is_sprinting { 12.0 } else { 8.5 };
+            self.bob_time += dt * bob_speed;
+        } else {
+            self.bob_time += dt * 1.5;
+        }
+
+        let bob_h = if is_moving {
+            (self.bob_time * 0.5).cos() * if is_sprinting { 0.035 } else { 0.02 }
+        } else {
+            0.0
+        };
+        let bob_v = if is_moving {
+            self.bob_time.sin() * if is_sprinting { 0.045 } else { 0.025 }
+        } else {
+            0.0
+        };
+
+        // 2. Micro Hand Tremor & Natural Breathing Sway
+        let t = self.sway_time;
+        let breath_x = (t * 1.4).sin() * 0.007 + (t * 3.8).cos() * 0.0028;
+        let breath_y = (t * 2.1).cos() * 0.008 + (t * 5.2).sin() * 0.0028;
+
+        // Socket offset: held to the right, lower, and forward
+        let target_pos =
+            camera_eye + right * (0.20 + bob_h) + up * (-0.16 + bob_v) + camera_look_dir * 0.12;
+
+        let target_dir = (camera_look_dir + right * breath_x + up * breath_y).normalize();
+
+        // 3. Cinematic Lag & Tweening (inertia)
+        let pos_lerp_speed = (16.0 * dt).min(1.0);
+        self.current_pos = self.current_pos.lerp(target_pos, pos_lerp_speed);
+
+        let dir_lerp_speed = (10.5 * dt).min(1.0);
+        self.current_dir = self
+            .current_dir
+            .lerp(target_dir, dir_lerp_speed)
+            .normalize();
+    }
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::Builder::from_env(
@@ -88,6 +166,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         GRASS_ATLAS_NORMAL_BYTES,
     )?;
 
+    let sky_pipeline = SkyPipeline::new(
+        device,
+        config.format,
+        Mesh3DPipeline::DEPTH_FORMAT,
+        &mesh3d_pipeline.camera_bind_group_layout,
+    );
+
     let hud_pipeline = SpritePipeline::new(device, config.format);
 
     // Create 128x128 Font & Solid Rect Atlas for zero-alloc UI
@@ -118,6 +203,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut key_space = false;
     let mut key_shift = false;
 
+    // Realistic Flashlight Controller
+    let initial_look = Vec3::new(0.0, 0.0, -1.0);
+    let mut flashlight = FlashlightState::new(player_pos, initial_look);
+
     // Cursor position in window coordinates
     let mut cursor_screen_x = 0.0f32;
     let mut cursor_screen_y = 0.0f32;
@@ -125,7 +214,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Camera setup with dynamic FOV from settings
     let mut camera = Camera3D::new(
         player_pos,
-        player_pos + Vec3::new(0.0, 0.0, -1.0),
+        player_pos + initial_look,
         config.width as f32 / config.height as f32,
     );
     camera.fov_y_rad = settings.fov.to_radians();
@@ -133,6 +222,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 60Hz Fixed Timestep Clock for deterministic physics & sub-frame lerp
     let mut clock = GameClock::new(60);
     let start_time = Instant::now();
+    let mut last_frame_time = Instant::now();
 
     let mut last_fps_update = Instant::now();
     let mut frame_count = 0u64;
@@ -226,6 +316,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             }
                         }
+                        // Toggle Flashlight with 'F' key
+                        KeyCode::KeyF => {
+                            if is_pressed {
+                                flashlight.is_on = !flashlight.is_on;
+                            }
+                        }
                         KeyCode::KeyW => key_w = is_pressed,
                         KeyCode::KeyS => key_s = is_pressed,
                         KeyCode::KeyA => key_a = is_pressed,
@@ -237,6 +333,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 WindowEvent::RedrawRequested => {
                     scratchpad.reset();
+
+                    let now = Instant::now();
+                    let dt = (now - last_frame_time).as_secs_f32().min(0.05);
+                    last_frame_time = now;
 
                     // --- 60HZ DETERMINISTIC FIXED PHYSICS STEPPING ---
                     let _frame_dt = clock.advance_frame();
@@ -311,6 +411,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     camera.target = Vec3A::from(render_player_pos + look_dir);
                     camera.fov_y_rad = settings.fov.to_radians();
 
+                    // --- UPDATE REALISTIC DYNAMIC FLASHLIGHT ---
+                    let is_moving = key_w || key_s || key_a || key_d;
+                    flashlight.update(dt, render_player_pos, look_dir, is_moving, key_shift);
+
                     // --- STREAM VISIBLE TERRAIN CHUNKS ---
                     let chunk_size = TerrainPipeline::CHUNK_SIZE;
                     let center_cx = (render_player_pos.x / chunk_size).floor() as i32;
@@ -338,12 +442,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         bytemuck::cast_slice(&terrain_instances),
                     );
 
-                    // --- STREAM DENSE 3D FOLIAGE AROUND PLAYER ---
-                    let clumps_per_chunk = match settings.foliage {
-                        QualityTier::Low => 60,
-                        QualityTier::Medium => 140,
-                        QualityTier::High => 260,
-                        QualityTier::Epic => 400,
+                    // --- STREAM DENSE CARPET 3D FOLIAGE AROUND PLAYER ---
+                    // Smart concentric optimization: lush dense carpet around player, tapering naturally outward
+                    let base_foliage_density = match settings.foliage {
+                        QualityTier::Low => 550,
+                        QualityTier::Medium => 800,
+                        QualityTier::High => 1100,
+                        QualityTier::Epic => 1400,
                     };
                     let foliage_radius = match settings.foliage {
                         QualityTier::Low => 1,
@@ -357,10 +462,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     for cz in (center_cz - foliage_radius)..=(center_cz + foliage_radius) {
                         for cx in (center_cx - foliage_radius)..=(center_cx + foliage_radius) {
+                            let dist = (cx - center_cx).abs().max((cz - center_cz).abs());
+                            let clumps = if dist <= 1 {
+                                base_foliage_density
+                            } else {
+                                base_foliage_density / 3
+                            };
+
                             scatter_chunk_grass(
                                 cx,
                                 cz,
-                                clumps_per_chunk,
+                                clumps,
                                 num_grass_variants,
                                 &mut grass_instances_by_variant,
                             );
@@ -378,6 +490,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     // Upload Camera & Dynamic Settings Uniforms to GPU
                     let view_proj = camera.view_proj_matrix();
+                    let inv_view_proj = view_proj.inverse();
                     let sun_dir = Vec3::new(0.5, 0.9, 0.35).normalize();
 
                     let sun_pos = render_player_pos + sun_dir * 80.0;
@@ -396,15 +509,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let elapsed_time = start_time.elapsed().as_secs_f32();
                     let camera_input = CameraSettingsInput {
                         view_proj,
+                        inv_view_proj,
                         light_view_proj,
                         cam_pos: render_player_pos,
                         light_dir: sun_dir,
                         gamma: settings.gamma,
-                        motion_blur: elapsed_time, // continuous time for live root-anchored wind sway
+                        motion_blur: elapsed_time, // continuous time for live root-anchored wind sway & sky stars
                         fov_rad: settings.fov.to_radians(),
                         view_dist: settings.view_distance_world(),
                         quality_tiers: settings.quality_tiers_u32(),
                         quality_extra: settings.quality_extra_u32(),
+                        flashlight_pos: flashlight.current_pos,
+                        flashlight_dir: flashlight.current_dir,
+                        flashlight_on: flashlight.is_on,
+                        flashlight_intensity: 1.0,
                     };
                     mesh3d_pipeline.update_camera(queue, &camera_input);
 
@@ -436,20 +554,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         // Controls helper at bottom of screen
                         hud_instances.push(SpriteInstanceRaw {
                             position: [16.0, 16.0],
-                            size: [580.0, 32.0],
+                            size: [640.0, 32.0],
                             uv_min: [0.0, 0.0],
                             uv_max: [1.0 / 128.0, 1.0 / 128.0],
                             color_tint: [0.06, 0.09, 0.15, 0.85],
                         });
                         hud_instances.push(SpriteInstanceRaw {
                             position: [16.0, 46.0],
-                            size: [580.0, 2.0],
+                            size: [640.0, 2.0],
                             uv_min: [0.0, 0.0],
                             uv_max: [1.0 / 128.0, 1.0 / 128.0],
                             color_tint: [0.06, 0.72, 0.50, 0.8],
                         });
                         settings_ui::render_text(
-                            "WASD: MOVE | SPACE: JUMP | SHIFT: SPRINT | ESC: SETTINGS MENU",
+                            "WASD: MOVE | SHIFT: SPRINT | SPACE: JUMP | F: FLASHLIGHT | ESC: SETTINGS",
                             24.0,
                             24.0,
                             8.0,
@@ -573,7 +691,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 label: Some("3D First-Person Encoder"),
                             });
 
-                        // PASS 1: 3D Scene (Infinite Procedural Terrain & Dense Dynamic Foliage)
+                        // PASS 1: 3D Scene (Infinite Procedural Terrain & Dense Dynamic Foliage & Sky)
                         {
                             let mut render_pass =
                                 encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -584,9 +702,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             resolve_target: None,
                                             ops: wgpu::Operations {
                                                 load: wgpu::LoadOp::Clear(wgpu::Color {
-                                                    r: 0.04,
+                                                    r: 0.03,
                                                     g: 0.06,
-                                                    b: 0.11,
+                                                    b: 0.14,
                                                     a: 1.0,
                                                 }),
                                                 store: wgpu::StoreOp::Store,
@@ -653,6 +771,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     );
                                 }
                             }
+
+                            // 1C: Atmospheric Twilight Sky Dome & Starfield (drawn on background)
+                            render_pass.set_pipeline(&sky_pipeline.pipeline);
+                            render_pass.set_bind_group(0, &mesh3d_pipeline.camera_bind_group, &[]);
+                            render_pass.draw(0..3, 0..1);
                         }
 
                         // PASS 2: 2D On-Screen HUD Overlay, Font Atlas, and Settings Menu

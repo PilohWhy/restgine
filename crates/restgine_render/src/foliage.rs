@@ -41,12 +41,15 @@ pub struct GrassVariantRange {
 pub const GRASS_SHADER_WGSL: &str = r#"
 struct CameraUniform {
     view_proj: mat4x4<f32>,
+    inv_view_proj: mat4x4<f32>,
     light_view_proj: mat4x4<f32>,
     camera_pos: vec4<f32>,
     light_dir: vec4<f32>,
     settings: vec4<f32>,      // x=gamma, y=time, z=fov, w=view_distance
     quality_tiers: vec4<u32>, // x=shadow, y=gi, z=shading, w=post_process
     quality_extra: vec4<u32>, // x=effects, y=foliage, z=aa, w=textures
+    flashlight_pos: vec4<f32>, // xyz = pos, w = is_on
+    flashlight_dir: vec4<f32>, // xyz = dir, w = intensity
 };
 
 @group(0) @binding(0)
@@ -194,15 +197,30 @@ fn fs_main(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @location
 
     var lit_color = (ambient + diffuse) * albedo;
 
-    // Atmospheric Distance Fog
-    let dist = length(camera.camera_pos.xyz - in.world_pos);
-    let view_dist = camera.settings.w;
-    let fog_start = view_dist * 0.50;
-    let fog_end = view_dist * 0.92;
-    let fog_density = clamp((dist - fog_start) / (fog_end - fog_start + 0.001), 0.0, 1.0);
-    let smooth_fog = fog_density * fog_density * (3.0 - 2.0 * fog_density);
-    let sky_fog_color = vec3<f32>(0.04, 0.06, 0.11);
-    lit_color = mix(lit_color, sky_fog_color, smooth_fog);
+    // Realistic Flashlight (Double-Sided Translucent Foliage Spotlight)
+    if (camera.flashlight_pos.w > 0.5) {
+        let to_light = camera.flashlight_pos.xyz - in.world_pos;
+        let dist = length(to_light);
+        let l_dir = to_light / max(dist, 0.001);
+
+        let spot_dot = dot(-l_dir, camera.flashlight_dir.xyz);
+        let cos_outer = 0.86; // ~30 deg cone
+        let cos_inner = 0.94; // ~20 deg hotspot
+        let spot_factor = clamp((spot_dot - cos_outer) / (cos_inner - cos_outer), 0.0, 1.0);
+        let smooth_spot = spot_factor * spot_factor * (3.0 - 2.0 * spot_factor);
+
+        if (smooth_spot > 0.0) {
+            let atten = 1.0 / (1.0 + 0.06 * dist + 0.015 * dist * dist);
+            let dist_cutoff = clamp((55.0 - dist) / 12.0, 0.0, 1.0);
+
+            // Wrap lighting for lush translucent grass blades
+            let flash_diff = max(dot(normal_dir, l_dir) * 0.70 + 0.30, 0.0);
+            let flash_color = vec3<f32>(1.0, 0.97, 0.88);
+            let flash_intensity = camera.flashlight_dir.w * 4.2;
+
+            lit_color += flash_diff * albedo * flash_color * (smooth_spot * atten * dist_cutoff * flash_intensity);
+        }
+    }
 
     // ACES Tonemapping
     let a: f32 = 2.51;
@@ -230,7 +248,7 @@ pub struct FoliagePipeline {
 }
 
 impl FoliagePipeline {
-    pub const MAX_INSTANCES_PER_VARIANT: usize = 4096;
+    pub const MAX_INSTANCES_PER_VARIANT: usize = 16384;
 
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -561,23 +579,25 @@ pub fn scatter_chunk_grass(
         let ryaw = (((seed >> 32) & 0xFFFF) as f32 / 65535.0) * std::f32::consts::TAU;
 
         seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
-        let rscale = 0.85 + (((seed >> 32) & 0xFFFF) as f32 / 65535.0) * 0.45;
+        // Chunky, dense carpet footprint: 1.30m to 2.20m broad clumps
+        let rscale = 1.30 + (((seed >> 32) & 0xFFFF) as f32 / 65535.0) * 0.90;
 
         seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
         let variant_idx = ((seed >> 32) as usize) % variant_count;
 
         let wx = (chunk_x as f32) * 32.0 + rx * 32.0;
         let wz = (chunk_z as f32) * 32.0 + rz * 32.0;
-        let wy = crate::terrain::terrain_height(wx, wz);
+        // Sink 0.05m into terrain so blades are firmly anchored on rolling hills
+        let wy = crate::terrain::terrain_height(wx, wz) - 0.05;
 
         let model = Mat4::from_scale_rotation_translation(
-            Vec3::splat(rscale),
+            Vec3::new(rscale, rscale * 1.05, rscale),
             Quat::from_rotation_y(ryaw),
             Vec3::new(wx, wy, wz),
         );
 
-        // Subtle natural color tint
-        let color_tint = [0.94 + rx * 0.1, 1.0, 0.90 + rz * 0.1, 1.0];
+        // Rich lush meadow green color tint with subtle organic variation
+        let color_tint = [0.92 + rx * 0.14, 1.02, 0.88 + rz * 0.14, 1.0];
 
         if variant_idx < instances_by_variant.len()
             && instances_by_variant[variant_idx].len() < FoliagePipeline::MAX_INSTANCES_PER_VARIANT

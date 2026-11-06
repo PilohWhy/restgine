@@ -63,6 +63,7 @@ impl Mesh3DInstanceRaw {
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct Camera3DUniform {
     pub view_proj: [[f32; 4]; 4],
+    pub inv_view_proj: [[f32; 4]; 4],
     pub light_view_proj: [[f32; 4]; 4],
     pub camera_pos: [f32; 4],
     pub light_dir: [f32; 4],
@@ -72,12 +73,15 @@ pub struct Camera3DUniform {
     pub quality_tiers: [u32; 4],
     /// x: effects_tier, y: foliage_tier, z: aa_tier, w: textures_tier
     pub quality_extra: [u32; 4],
+    pub flashlight_pos: [f32; 4], // xyz = pos, w = is_on (1.0 or 0.0)
+    pub flashlight_dir: [f32; 4], // xyz = dir, w = intensity
 }
 
 /// Input parameters for updating the 3D camera and runtime shader settings.
 #[derive(Debug, Clone, Copy)]
 pub struct CameraSettingsInput {
     pub view_proj: Mat4,
+    pub inv_view_proj: Mat4,
     pub light_view_proj: Mat4,
     pub cam_pos: Vec3,
     pub light_dir: Vec3,
@@ -87,17 +91,24 @@ pub struct CameraSettingsInput {
     pub view_dist: f32,
     pub quality_tiers: [u32; 4],
     pub quality_extra: [u32; 4],
+    pub flashlight_pos: Vec3,
+    pub flashlight_dir: Vec3,
+    pub flashlight_on: bool,
+    pub flashlight_intensity: f32,
 }
 
 pub const MESH_3D_SHADER_WGSL: &str = r#"
 struct CameraUniform {
     view_proj: mat4x4<f32>,
+    inv_view_proj: mat4x4<f32>,
     light_view_proj: mat4x4<f32>,
     camera_pos: vec4<f32>,
     light_dir: vec4<f32>,
     settings: vec4<f32>,      // x=gamma, y=motion_blur, z=fov, w=view_distance
     quality_tiers: vec4<u32>, // x=shadow, y=gi, z=shading, w=post_process
     quality_extra: vec4<u32>, // x=effects, y=foliage, z=aa, w=textures
+    flashlight_pos: vec4<f32>,
+    flashlight_dir: vec4<f32>,
 };
 
 @group(0) @binding(0)
@@ -358,12 +369,15 @@ impl Mesh3DPipeline {
     ) -> Self {
         let camera_uniform = Camera3DUniform {
             view_proj: Mat4::IDENTITY.to_cols_array_2d(),
+            inv_view_proj: Mat4::IDENTITY.to_cols_array_2d(),
             light_view_proj: Mat4::IDENTITY.to_cols_array_2d(),
             camera_pos: [0.0, 10.0, 20.0, 1.0],
             light_dir: [0.5, 0.8, 0.3, 0.0],
             settings_params: [1.0, 0.5, 90.0_f32.to_radians(), 150.0], // default gamma 1.0, 90 fov
             quality_tiers: [2, 2, 2, 2],                               // default High
             quality_extra: [2, 2, 2, 2],
+            flashlight_pos: [0.0, 0.0, 0.0, 1.0],
+            flashlight_dir: [0.0, 0.0, -1.0, 1.0],
         };
 
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -733,6 +747,7 @@ impl Mesh3DPipeline {
     pub fn update_camera(&self, queue: &wgpu::Queue, input: &CameraSettingsInput) {
         let uniform = Camera3DUniform {
             view_proj: input.view_proj.to_cols_array_2d(),
+            inv_view_proj: input.inv_view_proj.to_cols_array_2d(),
             light_view_proj: input.light_view_proj.to_cols_array_2d(),
             camera_pos: [input.cam_pos.x, input.cam_pos.y, input.cam_pos.z, 1.0],
             light_dir: [input.light_dir.x, input.light_dir.y, input.light_dir.z, 0.0],
@@ -744,6 +759,18 @@ impl Mesh3DPipeline {
             ],
             quality_tiers: input.quality_tiers,
             quality_extra: input.quality_extra,
+            flashlight_pos: [
+                input.flashlight_pos.x,
+                input.flashlight_pos.y,
+                input.flashlight_pos.z,
+                if input.flashlight_on { 1.0 } else { 0.0 },
+            ],
+            flashlight_dir: [
+                input.flashlight_dir.x,
+                input.flashlight_dir.y,
+                input.flashlight_dir.z,
+                input.flashlight_intensity,
+            ],
         };
         queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&[uniform]));
     }
@@ -767,6 +794,7 @@ impl Mesh3DPipeline {
             queue,
             &CameraSettingsInput {
                 view_proj,
+                inv_view_proj: view_proj.inverse(),
                 light_view_proj,
                 cam_pos,
                 light_dir,
@@ -776,6 +804,10 @@ impl Mesh3DPipeline {
                 view_dist,
                 quality_tiers,
                 quality_extra,
+                flashlight_pos: cam_pos,
+                flashlight_dir: Vec3::NEG_Z,
+                flashlight_on: true,
+                flashlight_intensity: 1.0,
             },
         );
     }

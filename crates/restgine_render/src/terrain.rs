@@ -41,12 +41,15 @@ pub struct TerrainChunkInstance {
 pub const TERRAIN_SHADER_WGSL: &str = r#"
 struct CameraUniform {
     view_proj: mat4x4<f32>,
+    inv_view_proj: mat4x4<f32>,
     light_view_proj: mat4x4<f32>,
     camera_pos: vec4<f32>,
     light_dir: vec4<f32>,
     settings: vec4<f32>,      // x=gamma, y=time, z=fov, w=view_distance
     quality_tiers: vec4<u32>, // x=shadow, y=gi, z=shading, w=post_process
     quality_extra: vec4<u32>, // x=effects, y=foliage, z=aa, w=textures
+    flashlight_pos: vec4<f32>, // xyz = pos, w = is_on
+    flashlight_dir: vec4<f32>, // xyz = dir, w = intensity
 };
 
 @group(0) @binding(0)
@@ -191,15 +194,33 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     var lit_color = (ambient + diffuse) * albedo + specular;
 
-    // 5. Atmospheric Distance Fog (Smoothstep Falloff)
-    let dist = length(camera.camera_pos.xyz - in.world_pos);
-    let view_dist = camera.settings.w;
-    let fog_start = view_dist * 0.52;
-    let fog_end = view_dist * 0.95;
-    let fog_density = clamp((dist - fog_start) / (fog_end - fog_start + 0.001), 0.0, 1.0);
-    let smooth_fog = fog_density * fog_density * (3.0 - 2.0 * fog_density);
-    let sky_fog_color = vec3<f32>(0.04, 0.06, 0.11);
-    lit_color = mix(lit_color, sky_fog_color, smooth_fog);
+    // 5. Realistic Flashlight (Spotlight with smooth cone & inverse-square falloff)
+    if (camera.flashlight_pos.w > 0.5) {
+        let to_light = camera.flashlight_pos.xyz - in.world_pos;
+        let dist = length(to_light);
+        let l_dir = to_light / max(dist, 0.001);
+
+        let spot_dot = dot(-l_dir, camera.flashlight_dir.xyz);
+        let cos_outer = 0.86; // ~30 deg cone
+        let cos_inner = 0.94; // ~20 deg hotspot
+        let spot_factor = clamp((spot_dot - cos_outer) / (cos_inner - cos_outer), 0.0, 1.0);
+        let smooth_spot = spot_factor * spot_factor * (3.0 - 2.0 * spot_factor);
+
+        if (smooth_spot > 0.0) {
+            let atten = 1.0 / (1.0 + 0.06 * dist + 0.015 * dist * dist);
+            let dist_cutoff = clamp((55.0 - dist) / 12.0, 0.0, 1.0);
+
+            let flash_diff = max(dot(normal, l_dir), 0.0);
+            let flash_color = vec3<f32>(1.0, 0.97, 0.88);
+            let flash_intensity = camera.flashlight_dir.w * 4.2;
+
+            let half_flash = normalize(l_dir + view_dir);
+            let flash_ndoth = max(dot(normal, half_flash), 0.0);
+            let flash_spec = pow(flash_ndoth, mix(32.0, 96.0, 1.0 - roughness)) * (1.0 - roughness * 0.5);
+
+            lit_color += (flash_diff * albedo + flash_spec * vec3<f32>(0.22)) * flash_color * (smooth_spot * atten * dist_cutoff * flash_intensity);
+        }
+    }
 
     // 6. ACES Filmic Tonemapping
     let a: f32 = 2.51;
