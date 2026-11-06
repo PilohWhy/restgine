@@ -1,7 +1,8 @@
 pub mod components;
 
 pub use components::{
-    Footprint, FootprintShape, GroundShadow, RenderLayer, Sprite, Transform25D, Velocity25D,
+    AssetId, Footprint, FootprintShape, GroundShadow, MeshletCluster, RenderLayer, RigidBodyXPBD,
+    Sprite, Transform25D, Transform3D, Velocity25D, Velocity3D,
 };
 pub use hecs::{Entity, World};
 

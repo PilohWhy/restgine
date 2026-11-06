@@ -3,7 +3,7 @@ use hecs::{Entity, World};
 use mlua::{FromLua, Lua, UserData, UserDataMethods, Value};
 use restgine_audio::AudioEngine;
 use restgine_core::InputState;
-use restgine_ecs::{Footprint, RenderLayer, Sprite, Transform25D, Velocity25D};
+use restgine_ecs::{AssetId, Footprint, RenderLayer, Sprite, Transform25D, Velocity25D};
 use restgine_render::PixelCamera;
 use restgine_steam::SteamContext;
 use std::sync::{Arc, Mutex};
@@ -58,7 +58,7 @@ pub fn register_engine_api(lua: &Lua, ctx: EngineContext) -> mlua::Result<()> {
             let radius: f32 = params.get("radius").unwrap_or(8.0);
             let z_height: f32 = params.get("z_height").unwrap_or(16.0);
             let is_solid: bool = params.get("is_solid").unwrap_or(true);
-            let texture: String = params.get("texture").unwrap_or_default();
+            let _texture: String = params.get("texture").unwrap_or_default();
 
             let layer_str: String = params
                 .get("layer")
@@ -78,7 +78,7 @@ pub fn register_engine_api(lua: &Lua, ctx: EngineContext) -> mlua::Result<()> {
                 Velocity25D::zero(),
                 Footprint::circle(radius, z_height).with_solid(is_solid),
                 Sprite {
-                    texture_id: texture,
+                    asset: AssetId::DEFAULT_WHITE,
                     layer,
                     ..Default::default()
                 },
@@ -96,10 +96,10 @@ pub fn register_engine_api(lua: &Lua, ctx: EngineContext) -> mlua::Result<()> {
             move |_, (_self, handle, vx, vy, vz): (Value, LuaEntity, f32, f32, Option<f32>)| {
                 let world = world_arc.lock().unwrap();
                 if let Ok(mut vel) = world.get::<&mut Velocity25D>(handle.entity) {
-                    vel.velocity.x = vx;
-                    vel.velocity.y = vy;
+                    vel.linear.x = vx;
+                    vel.linear.y = vy;
                     if let Some(z) = vz {
-                        vel.velocity.z = z;
+                        vel.linear.z = z;
                     }
                 }
                 Ok(())
@@ -115,9 +115,9 @@ pub fn register_engine_api(lua: &Lua, ctx: EngineContext) -> mlua::Result<()> {
             let mut pos = (0.0, 0.0, 0.0);
             if let Ok(transform) = world.get::<&Transform25D>(handle.entity) {
                 pos = (
-                    transform.position.x,
-                    transform.position.y,
-                    transform.position.z,
+                    transform.translation.x,
+                    transform.translation.y,
+                    transform.translation.z,
                 );
             }
             Ok(pos)

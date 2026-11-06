@@ -4,9 +4,10 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
-description = "Lightweight 2.5D archetype ECS built on hecs for Restgine"
+description = "Lightweight 2.5D/3D archetype ECS built on hecs for Restgine"
 
 [dependencies]
+restgine_core.workspace = true
 hecs.workspace = true
 glam.workspace = true
 serde.workspace = true

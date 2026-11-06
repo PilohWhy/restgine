@@ -45,7 +45,7 @@ impl IsaacRenderBatch {
         // In 2.5D projection:
         // screen_x = x
         // screen_y = y - z
-        let screen_pos = transform.screen_coords() + sprite.anchor_offset;
+        let screen_pos = transform.screen_coords_25d() + sprite.anchor_offset;
 
         let uv_min = if sprite.flip_x {
             [sprite.uv_rect[2], sprite.uv_rect[1]]
@@ -77,12 +77,12 @@ impl IsaacRenderBatch {
     /// Submit a shadow decal projected directly onto the ground.
     pub fn submit_shadow(&mut self, transform: &Transform25D, radius: f32, opacity: f32) {
         // Shadow is on ground plane at (x, y), fading as height z increases
-        let z_height = transform.position.z.max(0.0);
-        let scale_factor = (1.0 - (z_height / 120.0)).clamp(0.2, 1.0);
+        let z_height = transform.translation.z.max(0.0);
+        let scale_factor = (1.0f32 - (z_height / 120.0)).clamp(0.2, 1.0);
         let effective_radius = radius * scale_factor;
         let effective_opacity = opacity * scale_factor;
 
-        let ground_pos = Vec2::new(transform.position.x, transform.position.y);
+        let ground_pos = Vec2::new(transform.translation.x, transform.translation.y);
         let screen_pos = ground_pos - Vec2::new(effective_radius, effective_radius * 0.5);
 
         let instance = SpriteInstanceRaw {

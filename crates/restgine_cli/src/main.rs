@@ -1,8 +1,11 @@
+mod benchmark;
+mod demo;
+
 use clap::{Parser, Subcommand};
 use notify::{RecursiveMode, Watcher};
 use restgine_assets::VfsPacker;
 use restgine_audio::AudioEngine;
-use restgine_core::{GameClock, GameConfig, InputState};
+use restgine_core::{GameClock, GameConfig, InputState, RenderDimension};
 use restgine_ecs::create_world;
 use restgine_luau::{write_typedef_file, EngineContext, LuauRuntime};
 use restgine_physics::{step_physics_25d, SpatialHashGrid};
@@ -18,7 +21,7 @@ use std::time::Duration;
 #[command(name = "restgine")]
 #[command(author = "Restgine Contributors")]
 #[command(version = "0.1.0")]
-#[command(about = "High-performance 2D isometric / 2.5D pixel art game engine for Steam", long_about = None)]
+#[command(about = "High-performance universal 2D/3D continuum game engine for Steam", long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -43,6 +46,24 @@ enum Commands {
         #[arg(long, default_value = "true")]
         release: bool,
     },
+    /// Run an uncapped performance benchmark measuring real framerate and entity throughput
+    Benchmark {
+        /// Number of simulated entities
+        #[arg(short, long, default_value = "100000")]
+        entities: usize,
+        /// Duration of the benchmark run in seconds
+        #[arg(short, long, default_value = "5")]
+        duration: u64,
+        /// Dimension mode: '2d', '2.5d', or '3d'
+        #[arg(long, default_value = "3d")]
+        dimension: String,
+    },
+    /// Run a sample 2D/3D continuum game with live uncapped FPS display
+    Demo {
+        /// Duration in seconds to run (default 5s, 0 for infinite)
+        #[arg(short, long, default_value = "5")]
+        duration: u64,
+    },
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -58,6 +79,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Commands::Build { release: _ } => {
             build_release_pak()?;
+        }
+        Commands::Benchmark {
+            entities,
+            duration,
+            dimension,
+        } => {
+            let dim = match dimension.to_lowercase().as_str() {
+                "2d" => RenderDimension::Dimensional2D,
+                "2.5d" | "iso" | "isometric" => RenderDimension::Isometric25D,
+                _ => RenderDimension::Full3D,
+            };
+            benchmark::run_uncapped_benchmark(entities, duration, dim);
+        }
+        Commands::Demo { duration } => {
+            demo::run_continuum_demo(duration)?;
         }
     }
 
@@ -207,7 +243,7 @@ fn run_dev_mode(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    let mut clock = GameClock::new(config.viewport.target_fps);
+    let mut clock = GameClock::new(config.viewport.target_physics_hz);
     let mut spatial_grid = SpatialHashGrid::new(64.0);
     let mut render_batch = IsaacRenderBatch::new();
 

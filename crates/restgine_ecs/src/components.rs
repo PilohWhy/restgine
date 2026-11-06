@@ -1,67 +1,63 @@
-use glam::{Vec2, Vec3};
+use glam::{Vec2, Vec3, Vec3A};
+pub use restgine_core::Transform3D;
 use serde::{Deserialize, Serialize};
 
-/// 2.5D position in space (inspired by The Binding of Isaac).
-/// - `x, y`: Ground plane coordinates.
-/// - `z`: Height above ground (for airborne units, jumping, or projectile arcs).
+/// Interned 32-bit generational asset identifier eliminating heap String allocations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct AssetId(pub u32);
+
+impl AssetId {
+    pub const INVALID: Self = Self(0);
+    pub const DEFAULT_WHITE: Self = Self(1);
+    pub const DEFAULT_CUBE: Self = Self(2);
+}
+
+impl Default for AssetId {
+    fn default() -> Self {
+        Self::DEFAULT_WHITE
+    }
+}
+
+/// Backward compatibility alias for 2.5D projects.
+pub type Transform25D = Transform3D;
+
+/// 3D/2.5D velocity vector.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct Transform25D {
-    pub position: Vec3,
-    pub previous_position: Vec3,
+pub struct Velocity3D {
+    pub linear: Vec3A,
+    pub angular: Vec3,
 }
 
-impl Transform25D {
-    pub fn new(x: f32, y: f32, z: f32) -> Self {
-        let pos = Vec3::new(x, y, z);
-        Self {
-            position: pos,
-            previous_position: pos,
-        }
-    }
-
-    /// Screen position projection: screen_x = x, screen_y = y - z.
-    pub fn screen_coords(&self) -> Vec2 {
-        Vec2::new(self.position.x, self.position.y - self.position.z)
-    }
-
-    /// Ground footprint coordinate used for Depth / Y-Sorting: y.
-    pub fn ground_y(&self) -> f32 {
-        self.position.y
-    }
-}
-
-/// 2.5D velocity vector.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct Velocity25D {
-    pub velocity: Vec3,
-}
-
-impl Velocity25D {
+impl Velocity3D {
     pub fn new(vx: f32, vy: f32, vz: f32) -> Self {
         Self {
-            velocity: Vec3::new(vx, vy, vz),
+            linear: Vec3A::new(vx, vy, vz),
+            angular: Vec3::ZERO,
         }
     }
 
     pub fn zero() -> Self {
         Self {
-            velocity: Vec3::ZERO,
+            linear: Vec3A::ZERO,
+            angular: Vec3::ZERO,
         }
     }
 }
+
+pub type Velocity25D = Velocity3D;
 
 /// Physical footprint shape on the ground plane (x, y) with a vertical height boundary (z).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum FootprintShape {
     Circle { radius: f32 },
     AABB { half_extents: Vec2 },
+    Sphere3D { radius: f32 },
+    Box3D { half_extents: Vec3 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Footprint {
     pub shape: FootprintShape,
-    /// Vertical height of the entity along the Z axis.
-    /// A projectile at z=10 can fly over an obstacle with height=8, but hits one with height=20.
     pub z_height: f32,
     pub is_solid: bool,
     pub is_trigger: bool,
@@ -87,32 +83,45 @@ impl Footprint {
             is_trigger: false,
         }
     }
+
+    pub fn sphere(radius: f32) -> Self {
+        Self {
+            shape: FootprintShape::Sphere3D { radius },
+            z_height: radius * 2.0,
+            is_solid: true,
+            is_trigger: false,
+        }
+    }
+
+    pub fn box3d(hx: f32, hy: f32, hz: f32) -> Self {
+        Self {
+            shape: FootprintShape::Box3D {
+                half_extents: Vec3::new(hx, hy, hz),
+            },
+            z_height: hz * 2.0,
+            is_solid: true,
+            is_trigger: false,
+        }
+    }
 }
 
 /// Discrete rendering layers matching The Binding of Isaac architecture.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum RenderLayer {
-    /// Room floor tiles and static base walls.
     Floor = 0,
-    /// Creep, stains, blood, and ground shadows.
     GroundDecals = 1,
-    /// Dynamic entities sorted dynamically by Footprint Y (Player, Enemies, Rocks, Pickups).
     GroundEntities = 2,
-    /// Airborne entities, flies, tears, and high jumping bosses.
     Airborne = 3,
-    /// Overhanging door arches, roofs, and foreground canopies.
     Foreground = 4,
-    /// Screen-space user interface (Hearts, Keys, Minimap).
     UserInterface = 5,
 }
 
-/// 2D Sprite visual representation.
+/// 2D Sprite visual representation using compact 32-bit AssetId and packed colors.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Sprite {
-    pub texture_id: String,
-    pub uv_rect: [f32; 4], // [u_min, v_min, u_max, v_max]
+    pub asset: AssetId,
+    pub uv_rect: [f32; 4],
     pub size: Vec2,
-    /// Anchor offset from ground pivot point to top-left of sprite.
     pub anchor_offset: Vec2,
     pub flip_x: bool,
     pub flip_y: bool,
@@ -123,10 +132,10 @@ pub struct Sprite {
 impl Default for Sprite {
     fn default() -> Self {
         Self {
-            texture_id: String::new(),
+            asset: AssetId::DEFAULT_WHITE,
             uv_rect: [0.0, 0.0, 1.0, 1.0],
             size: Vec2::new(16.0, 16.0),
-            anchor_offset: Vec2::new(-8.0, -16.0), // Centered on ground, sprite extends upward
+            anchor_offset: Vec2::new(-8.0, -16.0),
             flip_x: false,
             flip_y: false,
             color_tint: [1.0, 1.0, 1.0, 1.0],
@@ -147,6 +156,59 @@ impl Default for GroundShadow {
         Self {
             base_radius: 8.0,
             opacity: 0.5,
+        }
+    }
+}
+
+/// 3D Meshlet cluster component for hardware GPU culling and Visibility Buffer rendering.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct MeshletCluster {
+    pub mesh_asset: AssetId,
+    pub cluster_offset: u32,
+    pub cluster_count: u32,
+    pub bounding_sphere: [f32; 4], // [center_x, center_y, center_z, radius]
+}
+
+impl Default for MeshletCluster {
+    fn default() -> Self {
+        Self {
+            mesh_asset: AssetId::DEFAULT_CUBE,
+            cluster_offset: 0,
+            cluster_count: 1,
+            bounding_sphere: [0.0, 0.0, 0.0, 1.0],
+        }
+    }
+}
+
+/// XPBD (Extended Position-Based Dynamics) rigid body component.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct RigidBodyXPBD {
+    pub mass: f32,
+    pub inv_mass: f32,
+    pub restitution: f32,
+    pub friction: f32,
+    pub is_kinematic: bool,
+}
+
+impl RigidBodyXPBD {
+    pub fn dynamic(mass: f32) -> Self {
+        let m = mass.max(0.001);
+        Self {
+            mass: m,
+            inv_mass: 1.0 / m,
+            restitution: 0.3,
+            friction: 0.5,
+            is_kinematic: false,
+        }
+    }
+
+    pub fn kinematic() -> Self {
+        Self {
+            mass: 0.0,
+            inv_mass: 0.0,
+            restitution: 0.0,
+            friction: 0.5,
+            is_kinematic: true,
         }
     }
 }

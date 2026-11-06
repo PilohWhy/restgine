@@ -1,17 +1,17 @@
 use glam::Vec2;
-use restgine_ecs::{Footprint, FootprintShape, Transform25D};
+use restgine_ecs::{Footprint, FootprintShape, Transform3D};
 
-/// Checks if two 2.5D entities overlap in space (ground plane footprint AND vertical Z-interval).
+/// Checks if two entities overlap in space (ground plane footprint AND vertical Z-interval).
 pub fn check_overlap_25d(
-    t1: &Transform25D,
+    t1: &Transform3D,
     f1: &Footprint,
-    t2: &Transform25D,
+    t2: &Transform3D,
     f2: &Footprint,
 ) -> Option<Vec2> {
     // 1. Z-axis vertical interval overlap check
-    let z1_min = t1.position.z;
+    let z1_min = t1.translation.z;
     let z1_max = z1_min + f1.z_height;
-    let z2_min = t2.position.z;
+    let z2_min = t2.translation.z;
     let z2_max = z2_min + f2.z_height;
 
     let z_overlap = z1_min.max(z2_min) < z1_max.min(z2_max);
@@ -20,8 +20,8 @@ pub fn check_overlap_25d(
     }
 
     // 2. Ground plane (x, y) footprint intersection
-    let p1 = Vec2::new(t1.position.x, t1.position.y);
-    let p2 = Vec2::new(t2.position.x, t2.position.y);
+    let p1 = Vec2::new(t1.translation.x, t1.translation.y);
+    let p2 = Vec2::new(t2.translation.x, t2.translation.y);
 
     match (&f1.shape, &f2.shape) {
         (FootprintShape::Circle { radius: r1 }, FootprintShape::Circle { radius: r2 }) => {
@@ -64,6 +64,7 @@ pub fn check_overlap_25d(
                 None
             }
         }
+        _ => None,
     }
 }
 
