@@ -349,23 +349,24 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                     }
 
                     let density = clamp(1.0 - max(p.y, 0.0) * 0.15, 0.18, 1.0);
-                    let step_light = profile * atten * (phase_flash * density * 3.8 + spore_glow * 0.75) * f_step_len;
+                    let step_light = profile * atten * (phase_flash * density * 0.14 + spore_glow * 0.08) * f_step_len;
                     beam_accum += flash_color * step_light;
                     f_t += f_step_len;
                 }
 
+                beam_accum = min(beam_accum, vec3<f32>(0.45));
                 scene_color += beam_accum * camera.flashlight_dir.w;
             }
         }
     }
 
     // ------------------------------------------------------------------------
-    // 4. RICH MULTI-TAP BLOOM WITH ANAMORPHIC FLARES & SPECULAR STARBURST
+    // 4. BALANCED MULTI-TAP CINEMATIC BLOOM (Natural Light Bleed without Glare)
     // ------------------------------------------------------------------------
     if (post_tier >= 1u) {
-        let thresh = select(0.75, select(0.58, 0.44, post_tier >= 3u), post_tier >= 2u);
-        let knee = 0.22;
-        let bloom_intensity = select(0.40, select(0.75, 1.25, post_tier >= 3u), post_tier >= 2u);
+        let thresh = select(1.25, select(1.10, 0.95, post_tier >= 3u), post_tier >= 2u);
+        let knee = 0.20;
+        let bloom_intensity = select(0.18, select(0.26, 0.35, post_tier >= 3u), post_tier >= 2u);
 
         // Center tap
         let c_center = extract_bloom(textureSample(t_scene, s_linear, in.uv).rgb, thresh, knee);
@@ -382,44 +383,14 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let m_t = extract_bloom(textureSample(t_scene, s_linear, in.uv + vec2<f32>( 0.0,  r2)).rgb, thresh * 1.15, knee);
         let m_b = extract_bloom(textureSample(t_scene, s_linear, in.uv + vec2<f32>( 0.0, -r2)).rgb, thresh * 1.15, knee);
         let m_l = extract_bloom(textureSample(t_scene, s_linear, in.uv + vec2<f32>(-r2,  0.0)).rgb, thresh * 1.15, knee);
-        let m_r = extract_bloom(textureSample(t_scene, s_linear, in.uv + vec2<f32>( r2,  0.0)).rgb, thresh * 1.15, knee);
+        let m_r = extract_bloom(textureSample(t_scene, s_linear, in.uv + vec2<f32>( r1,  0.0)).rgb, thresh * 1.15, knee);
 
-        // Tier 3: Atmospheric bleed halo (radius ~32px)
-        let r3 = 0.030;
-        let o_t = extract_bloom(textureSample(t_scene, s_linear, in.uv + vec2<f32>( 0.0,  r3)).rgb, thresh * 1.35, knee);
-        let o_b = extract_bloom(textureSample(t_scene, s_linear, in.uv + vec2<f32>( 0.0, -r3)).rgb, thresh * 1.35, knee);
-        let o_l = extract_bloom(textureSample(t_scene, s_linear, in.uv + vec2<f32>(-r3,  0.0)).rgb, thresh * 1.35, knee);
-        let o_r = extract_bloom(textureSample(t_scene, s_linear, in.uv + vec2<f32>( r3,  0.0)).rgb, thresh * 1.35, knee);
-
-        let multi_bloom = c_center * 0.26 +
+        let multi_bloom = c_center * 0.45 +
             (i_t + i_b + i_l + i_r) * 0.10 +
-            (m_t + m_b + m_l + m_r) * 0.05 +
-            (o_t + o_b + o_l + o_r) * 0.035;
-
-        // Anamorphic horizontal streak flare + Specular Starburst
-        var anamorphic_flare = vec3<f32>(0.0);
-        var starburst = vec3<f32>(0.0);
-        if (post_tier >= 2u) {
-            let a1 = extract_bloom(textureSample(t_scene, s_linear, in.uv + vec2<f32>(-0.015, 0.0)).rgb, thresh * 1.25, knee);
-            let a2 = extract_bloom(textureSample(t_scene, s_linear, in.uv + vec2<f32>( 0.015, 0.0)).rgb, thresh * 1.25, knee);
-            let a3 = extract_bloom(textureSample(t_scene, s_linear, in.uv + vec2<f32>(-0.032, 0.0)).rgb, thresh * 1.50, knee);
-            let a4 = extract_bloom(textureSample(t_scene, s_linear, in.uv + vec2<f32>( 0.032, 0.0)).rgb, thresh * 1.50, knee);
-            anamorphic_flare = (a1 + a2) * 0.36 + (a3 + a4) * 0.20;
-
-            // 4-point diagonal specular starburst diffraction spikes on intense highlights
-            let star_thresh = thresh * 1.85;
-            let s_tr = extract_bloom(textureSample(t_scene, s_linear, in.uv + vec2<f32>( 0.016,  0.012)).rgb, star_thresh, knee);
-            let s_bl = extract_bloom(textureSample(t_scene, s_linear, in.uv + vec2<f32>(-0.016, -0.012)).rgb, star_thresh, knee);
-            let s_tl = extract_bloom(textureSample(t_scene, s_linear, in.uv + vec2<f32>(-0.016,  0.012)).rgb, star_thresh, knee);
-            let s_br = extract_bloom(textureSample(t_scene, s_linear, in.uv + vec2<f32>( 0.016, -0.012)).rgb, star_thresh, knee);
-            starburst = (s_tr + s_bl + s_tl + s_br) * 0.28;
-        }
+            (m_t + m_b + m_l + m_r) * 0.038;
 
         let bloom_tint = select(vec3<f32>(0.84, 0.92, 1.06), vec3<f32>(1.06, 0.96, 0.84), camera.flashlight_pos.w > 0.5);
-        let flare_tint = vec3<f32>(0.72, 0.88, 1.25);
-        let star_tint = vec3<f32>(0.92, 0.96, 1.05);
-
-        scene_color += (multi_bloom * bloom_tint + anamorphic_flare * flare_tint + starburst * star_tint) * bloom_intensity;
+        scene_color += multi_bloom * bloom_tint * bloom_intensity;
     }
 
     // ------------------------------------------------------------------------
@@ -436,7 +407,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     // ------------------------------------------------------------------------
-    // 6. SCOTOPIC PURKINJE SHIFT & 35MM ANALOG SILVER-HALIDE FILM GRAIN
+    // 6. SCOTOPIC PURKINJE SHIFT & FINE 35MM CINEMATIC FILM GRAIN
     // ------------------------------------------------------------------------
     let luma = dot(scene_color, vec3<f32>(0.2126, 0.7152, 0.0722));
     let scotopic = exp(-luma * 6.5);
@@ -444,11 +415,14 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     scene_color = mix(scene_color, rod_color, scotopic * 0.32);
 
     if (post_tier >= 2u) {
+        let grain_time = fract(camera.settings.y * 17.31);
+        let grain_coord = in.position.xy + vec2<f32>(grain_time * 193.1, grain_time * 437.7);
+        let p3 = fract(vec3<f32>(grain_coord.x, grain_coord.y, grain_coord.x) * 0.1031);
+        let rand_noise = fract((p3.x + p3.y) * (p3.z + 33.33));
+
         let grain_scale = 4.0 * clamp(luma, 0.0, 1.0) * (1.0 - clamp(luma, 0.0, 1.0));
-        let grain_time = fract(camera.settings.y * 11.173);
-        let grain_noise = fract(screen_ign + grain_time);
-        let grain_strength = select(0.016, 0.026, post_tier >= 3u);
-        let grain = (grain_noise - 0.5) * grain_scale * grain_strength;
+        let grain_strength = select(0.005, 0.009, post_tier >= 3u);
+        let grain = (rand_noise - 0.5) * grain_scale * grain_strength;
         scene_color = max(scene_color + vec3<f32>(grain), vec3<f32>(0.0));
     }
 

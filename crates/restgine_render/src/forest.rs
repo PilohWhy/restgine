@@ -471,8 +471,8 @@ fn fs_bark(in: VertexOutput) -> @location(0) vec4<f32> {
             let fv = v_smith_ggx(ndotv, f_ndotl, bark_roughness);
             let flash_spec = min(fd * fv * ff, 5.0) * f_ndotl;
 
-            let flash_color = vec3<f32>(1.0, 0.97, 0.88);
-            let flash_power = beam_profile * atten * dist_cutoff * camera.flashlight_dir.w * 4.2;
+            let flash_color = vec3<f32>(1.0, 0.96, 0.88);
+            let flash_power = beam_profile * atten * dist_cutoff * camera.flashlight_dir.w * 1.6;
 
             lit_color += ((1.0 - ff) * f_ndotl * albedo + flash_spec) * flash_color * flash_power;
         }
@@ -623,12 +623,12 @@ fn fs_leaf(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @location
 
             let atten = 1.0 / (1.0 + 0.055 * l_dist + 0.014 * l_dist_sq);
             let dist_cutoff = clamp((56.0 - l_dist) / 12.0, 0.0, 1.0);
-            let flash_color = vec3<f32>(1.0, 0.97, 0.88);
-            let flash_power = beam_profile * atten * dist_cutoff * camera.flashlight_dir.w * 4.2;
+            let flash_color = vec3<f32>(1.0, 0.96, 0.88);
+            let flash_power = beam_profile * atten * dist_cutoff * camera.flashlight_dir.w * 1.6;
 
             let flash_diff = max(dot(normal_dir, l_dir), 0.0);
             let flash_back = max(dot(view_dir, -l_dir), 0.0);
-            let flash_sss = flash_back * flash_back * sqrt(flash_back) * 0.70;
+            let flash_sss = flash_back * flash_back * sqrt(flash_back) * 0.45;
 
             let half_flash = normalize(l_dir + view_dir);
             let f_ndoth = max(dot(normal_dir, half_flash), 0.0);
@@ -637,7 +637,7 @@ fn fs_leaf(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @location
             let ff = f_schlick(f_vdoth, f0);
             let fd = d_ggx(f_ndoth, leaf_roughness);
             let fv = v_smith_ggx(ndotv, f_ndotl, leaf_roughness);
-            let flash_spec = min(fd * fv * ff, 4.0) * f_ndotl;
+            let flash_spec = min(fd * fv * ff, 2.0) * f_ndotl;
 
             let total_flash = (flash_diff * albedo + flash_sss * albedo * sss_tint) + flash_spec * flash_color;
             lit_color += total_flash * flash_color * flash_power;
@@ -725,7 +725,7 @@ impl ForestPipeline {
             file.read_exact(&mut buf4)?;
             let leaf_icount = u32::from_le_bytes(buf4) as usize;
 
-            // Bark Geometry + Multi-Tier LOD0 / LOD1 / LOD2 Index Ranges
+            // Bark Geometry - full intact geometry preserves complete trunks & branches without amputation
             let bark_v_offset = all_vertices.len() as u32;
             let mut bark_raw_verts = vec![0u8; bark_vcount * 32];
             file.read_exact(&mut bark_raw_verts)?;
@@ -735,42 +735,18 @@ impl ForestPipeline {
             let mut bark_raw_indices = vec![0u8; bark_icount * 2];
             file.read_exact(&mut bark_raw_indices)?;
             let bark_i_slice: &[u16] = bytemuck::cast_slice(&bark_raw_indices);
+            let bark_i_offset = all_indices.len() as u32;
+            all_indices.extend_from_slice(bark_i_slice);
 
-            let bark_tris = bark_icount / 3;
-            let bark_targets = if kind == 0 {
-                [
-                    (bark_tris * 70 / 100).min(950).max(bark_tris.min(36)),
-                    (bark_tris * 32 / 100).min(380).max(bark_tris.min(24)),
-                    (bark_tris * 15 / 100).min(160).max(bark_tris.min(12)),
-                ]
-            } else {
-                [
-                    (bark_tris * 50 / 100).min(420).max(bark_tris.min(24)),
-                    (bark_tris * 20 / 100).min(160).max(bark_tris.min(12)),
-                    (bark_tris * 8 / 100).min(60).max(bark_tris.min(8)),
-                ]
-            };
-
-            let mut bark_lods = [MeshRange {
+            let bark_range = MeshRange {
                 vertex_offset: bark_v_offset,
                 vertex_count: bark_vcount as u32,
-                index_offset: 0,
-                index_count: 0,
-            }; 3];
-            for lod in 0..3 {
-                let decimated = build_bark_lod_indices(bark_v_slice, bark_i_slice, bark_targets[lod]);
-                let idx_off = all_indices.len() as u32;
-                let idx_cnt = decimated.len() as u32;
-                all_indices.extend_from_slice(&decimated);
-                bark_lods[lod] = MeshRange {
-                    vertex_offset: bark_v_offset,
-                    vertex_count: bark_vcount as u32,
-                    index_offset: idx_off,
-                    index_count: idx_cnt,
-                };
-            }
+                index_offset: bark_i_offset,
+                index_count: bark_icount as u32,
+            };
+            let bark_lods = [bark_range, bark_range, bark_range];
 
-            // Leaf Geometry + Multi-Tier Stratified Quad-Card LOD0 / LOD1 / LOD2 Index Ranges
+            // Leaf Geometry - full intact canopy foliage cards without missing holes
             let leaf_v_offset = all_vertices.len() as u32;
             let mut leaf_raw_verts = vec![0u8; leaf_vcount * 32];
             file.read_exact(&mut leaf_raw_verts)?;
@@ -780,40 +756,16 @@ impl ForestPipeline {
             let mut leaf_raw_indices = vec![0u8; leaf_icount * 2];
             file.read_exact(&mut leaf_raw_indices)?;
             let leaf_i_slice: &[u16] = bytemuck::cast_slice(&leaf_raw_indices);
+            let leaf_i_offset = all_indices.len() as u32;
+            all_indices.extend_from_slice(leaf_i_slice);
 
-            let leaf_tris = leaf_icount / 3;
-            let leaf_targets = if kind == 0 {
-                [
-                    (leaf_tris * 55 / 100).min(1600).max(leaf_tris.min(80)),
-                    (leaf_tris * 24 / 100).min(640).max(leaf_tris.min(48)),
-                    (leaf_tris * 10 / 100).min(220).max(leaf_tris.min(24)),
-                ]
-            } else {
-                [
-                    (leaf_tris * 50 / 100).min(900).max(leaf_tris.min(60)),
-                    (leaf_tris * 22 / 100).min(320).max(leaf_tris.min(32)),
-                    (leaf_tris * 9 / 100).min(110).max(leaf_tris.min(16)),
-                ]
-            };
-
-            let mut leaf_lods = [MeshRange {
+            let leaf_range = MeshRange {
                 vertex_offset: leaf_v_offset,
                 vertex_count: leaf_vcount as u32,
-                index_offset: 0,
-                index_count: 0,
-            }; 3];
-            for lod in 0..3 {
-                let decimated = build_leaf_lod_indices(leaf_v_slice, leaf_i_slice, leaf_targets[lod]);
-                let idx_off = all_indices.len() as u32;
-                let idx_cnt = decimated.len() as u32;
-                all_indices.extend_from_slice(&decimated);
-                leaf_lods[lod] = MeshRange {
-                    vertex_offset: leaf_v_offset,
-                    vertex_count: leaf_vcount as u32,
-                    index_offset: idx_off,
-                    index_count: idx_cnt,
-                };
-            }
+                index_offset: leaf_i_offset,
+                index_count: leaf_icount as u32,
+            };
+            let leaf_lods = [leaf_range, leaf_range, leaf_range];
 
             // Compute exact local-space bounding spheres for bark (shadow pass) and full mesh (camera pass)
             let mut bark_min_y = f32::MAX;

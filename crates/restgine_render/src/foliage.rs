@@ -448,12 +448,12 @@ fn fs_main(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @location
                 let atten = 1.0 / (1.0 + 0.055 * l_dist + 0.014 * l_dist_sq);
                 let dist_cutoff = clamp((55.0 - l_dist) * (1.0 / 12.0), 0.0, 1.0);
                 let flash_color = vec3<f32>(1.0, 0.97, 0.88);
-                let flash_power = beam_profile * atten * dist_cutoff * camera.flashlight_dir.w * 4.2;
+                let flash_power = beam_profile * atten * dist_cutoff * camera.flashlight_dir.w * 1.6;
 
                 let f_ndotl = max(dot(normal_dir, l_dir), 0.0);
                 let flash_diff = max(dot(normal_dir, l_dir) * 0.65 + 0.35, 0.0);
                 let flash_back = max(dot(view_dir, -l_dir), 0.0);
-                let flash_sss = (flash_back * flash_back * sqrt(flash_back)) * in.height_factor * 0.65;
+                let flash_sss = (flash_back * flash_back * sqrt(flash_back)) * in.height_factor * 0.45;
 
                 let half_flash = normalize(l_dir + view_dir);
                 let f_ndoth = max(dot(normal_dir, half_flash), 0.0);
@@ -461,7 +461,7 @@ fn fs_main(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @location
                 let ff = f_schlick(f_vdoth, f0);
                 let fd = d_ggx(f_ndoth, blade_roughness);
                 let fv = v_smith_ggx(ndotv, f_ndotl, blade_roughness);
-                let blade_spec = min(fd * fv * ff, 4.0) * f_ndotl * in.height_factor;
+                let blade_spec = min(fd * fv * ff, 2.0) * f_ndotl * in.height_factor;
 
                 let total_flash = (flash_diff * albedo + flash_sss * albedo * sss_tint) * root_ao + blade_spec;
                 lit_color += total_flash * flash_color * flash_power;

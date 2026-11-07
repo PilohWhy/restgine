@@ -131,39 +131,44 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         sky = mix(sky, sky + cirrus_color, cloud_density * 0.65);
     }
 
-    // 3. Multi-Magnitude Blackbody Colored Starfield (Occluded by Moon & Cirrus Clouds)
+    // 3. Crisp, Point-like Celestial Starfield (Pinpricks of light without voxel grid artifacts)
     if (up > 0.05 && sun_dot < 0.9985) {
-        let star_coord = floor(ray_dir * 200.0);
-        let star_rand = hash(star_coord);
-        if (star_rand > 0.976) {
-            let temp_hash = fract(star_rand * 43.17);
-            // Blackbody stellar chromaticity: blue-white (Rigel/Vega), gold (Capella), orange-red (Betelgeuse)
-            var star_color = vec3<f32>(0.85, 0.92, 1.0);
-            if (temp_hash < 0.30) {
-                star_color = vec3<f32>(0.72, 0.86, 1.15);
-            } else if (temp_hash > 0.78) {
-                star_color = vec3<f32>(1.12, 0.84, 0.66);
-            } else if (temp_hash > 0.55) {
-                star_color = vec3<f32>(1.04, 0.96, 0.84);
-            }
+        let az = atan2(ray_dir.z, ray_dir.x);
+        let el = asin(clamp(ray_dir.y, -1.0, 1.0));
+        let star_uv = vec2<f32>(az * 52.0, el * 52.0);
+        let cell = floor(star_uv);
+        let frac_pos = fract(star_uv) - 0.5;
 
-            // Atmospheric scintillation is stronger at low elevation (high airmass) and calmer near zenith
-            let scint_depth = mix(0.55, 0.20, clamp(up, 0.0, 1.0));
-            let twinkle = 1.0 - scint_depth * (0.5 - 0.5 * sin(time * 3.4 + star_rand * 71.0));
-            let mag = pow((star_rand - 0.976) / (1.0 - 0.976), 1.35);
-            let star_fade = smoothstep(0.05, 0.26, up) * (1.0 - cloud_density * 0.80);
-            sky += star_color * (mag * twinkle * 2.1 * star_fade);
+        let s_hash = hash2d(cell);
+        if (s_hash > 0.945) {
+            let jx = hash2d(cell + vec2<f32>(1.7, 9.2)) - 0.5;
+            let jy = hash2d(cell + vec2<f32>(8.3, 4.1)) - 0.5;
+            let d_star = length(frac_pos - vec2<f32>(jx, jy) * 0.65);
+
+            // Sub-pixel circular star core (smooth circular falloff, not cubic voxel)
+            let star_point = smoothstep(0.14, 0.0, d_star);
+            if (star_point > 0.0) {
+                let temp_hash = fract(s_hash * 37.19);
+                var star_color = vec3<f32>(0.85, 0.92, 1.0);
+                if (temp_hash < 0.28) {
+                    star_color = vec3<f32>(0.75, 0.88, 1.15); // Blue-white
+                } else if (temp_hash > 0.82) {
+                    star_color = vec3<f32>(1.15, 0.82, 0.65); // Warm gold
+                }
+
+                let twinkle = 0.75 + 0.25 * sin(time * 2.8 + s_hash * 62.0);
+                let mag = pow((s_hash - 0.945) / 0.055, 2.0);
+                let star_fade = smoothstep(0.05, 0.22, up) * (1.0 - cloud_density * 0.75);
+                sky += star_color * (star_point * mag * twinkle * 0.70 * star_fade);
+            }
         }
     }
 
-    // 4. Procedural Lunar Disc (Basaltic Maria, Rayed Craters & Lommel-Seeliger Limb Darkening)
-    //    + Atmospheric Diffraction Corona Halo
+    // 4. Subtle, Natural Atmospheric Moon Aureole (Tightened to avoid washing out the sky)
     let moon_light_color = vec3<f32>(0.86, 0.93, 1.0);
-    let inner_aureole = pow(sun_dot, 80.0) * 1.25;
-    let outer_corona = pow(sun_dot, 16.0) * 0.45;
-    let corona_ring = smoothstep(0.992, 0.996, sun_dot) * (1.0 - smoothstep(0.996, 0.9985, sun_dot));
-    let ring_color = vec3<f32>(0.75, 0.92, 1.15) * (corona_ring * 0.40);
-    sky += (inner_aureole + outer_corona) * moon_light_color + ring_color;
+    let inner_aureole = pow(sun_dot, 260.0) * 0.40;
+    let outer_corona = pow(sun_dot, 70.0) * 0.12;
+    sky += (inner_aureole + outer_corona) * moon_light_color;
 
     // Lunar angular radius: cos(theta_moon) = 0.9991 (~2.4 deg stylized cinematic full moon)
     let cos_moon_edge = 0.9991;

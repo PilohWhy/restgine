@@ -397,10 +397,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             let ff = f_schlick(f_vdoth, f0);
             let fd = d_ggx(f_ndoth, surface_roughness);
             let fv = v_smith_ggx(ndotv, f_ndotl, surface_roughness);
-            let flash_spec = min(fd * fv * ff, 8.0) * f_ndotl * (1.2 + puddle_depth * 2.5);
+            let flash_spec = min(fd * fv * ff, 3.0) * f_ndotl * (1.0 + puddle_depth * 1.5);
 
             let flash_color = vec3<f32>(1.0, 0.97, 0.88);
-            let flash_power = beam_profile * atten * dist_cutoff * camera.flashlight_dir.w * 4.2;
+            let flash_power = beam_profile * atten * dist_cutoff * camera.flashlight_dir.w * 1.6;
 
             lit_color += ((1.0 - ff) * f_ndotl * surface_albedo * final_ao + flash_spec * final_ao) * flash_color * flash_power;
         }
