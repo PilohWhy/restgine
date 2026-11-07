@@ -132,81 +132,71 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let cirrus_fbm = c1 * 0.50 + c2 * 0.32 + c3 * 0.18;
         cloud_density = smoothstep(0.52, 0.85, cirrus_fbm) * horizon_fade;
 
-        let moon_scatter = pow(sun_dot, 6.0) * 0.95 + pow(sun_dot, 28.0) * 1.6 + 0.22;
-        let cirrus_color = vec3<f32>(0.16, 0.24, 0.38) * moon_scatter;
-        sky = mix(sky, sky + cirrus_color, cloud_density * 0.65);
+        let moon_scatter = pow(sun_dot, 8.0) * 0.65 + pow(sun_dot, 32.0) * 1.2 + 0.12;
+        let cirrus_color = vec3<f32>(0.07, 0.12, 0.20) * moon_scatter;
+        sky = mix(sky, sky + cirrus_color, cloud_density * 0.22);
     }
 
-    // 3. Multi-Magnitude Organic Celestial Starfield (Pinpoint stars without coordinate grid artifacts)
+    // 3. Ultra-Crisp Sub-Pixel Pinpoint Starfield (Non-periodic, zero bloom blurring)
     if (up > 0.04 && sun_dot < 0.9985) {
-        let star_fade = smoothstep(0.04, 0.24, up) * (1.0 - cloud_density * 0.80);
+        let star_fade = smoothstep(0.06, 0.30, up) * (1.0 - cloud_density * 0.85);
 
-        // Layer 1: Bright & Medium Primary Stars
-        let p1 = ray_dir * 115.0;
-        let c1 = floor(p1);
-        let h1 = hash(c1);
-        if (h1 > 0.935) {
-            let s_pos1 = c1 + hash3_3(c1) * 0.70 + 0.15;
-            let s_dir1 = normalize(s_pos1);
+        // Spherical celestial coordinates eliminate all 3D rectilinear lattice artifacts
+        let phi = atan2(ray_dir.z, ray_dir.x); // [-PI, PI]
+        let theta = asin(clamp(ray_dir.y, -1.0, 1.0)); // [0, PI/2]
+
+        // Layer 1: Primary Diamond Stars
+        let uv1 = vec2<f32>(phi * 56.0, theta * 56.0);
+        let cell1 = floor(uv1);
+        let h1 = hash2d(cell1);
+        if (h1 > 0.976) {
+            let offset1 = vec2<f32>(fract(h1 * 37.1), fract(h1 * 83.7)) * 0.70 + 0.15;
+            let star_uv1 = (cell1 + offset1) / 56.0;
+            let star_phi1 = star_uv1.x;
+            let star_theta1 = star_uv1.y;
+            let cos_t = cos(star_theta1);
+            let s_dir1 = vec3<f32>(cos(star_phi1) * cos_t, sin(star_theta1), sin(star_phi1) * cos_t);
             let cos_s1 = dot(ray_dir, s_dir1);
-            if (cos_s1 > 0.99980) {
-                let d_ang1 = max(1.0 - cos_s1, 0.0);
-                let core1 = exp(-d_ang1 * 260000.0);
+            if (cos_s1 > 0.999991) {
+                let d = (cos_s1 - 0.999991) / 0.000009;
+                let core = d * d;
                 let temp1 = fract(h1 * 41.7);
-                var col1 = vec3<f32>(0.88, 0.93, 1.0);
-                if (temp1 < 0.25) {
-                    col1 = vec3<f32>(0.72, 0.86, 1.22); // B-class Rigel blue-white
-                } else if (temp1 > 0.80) {
-                    col1 = vec3<f32>(1.22, 0.78, 0.58); // M-class Betelgeuse orange-red
-                } else if (temp1 > 0.55) {
-                    col1 = vec3<f32>(1.12, 0.98, 0.76); // G-class Capella golden
+                var col1 = vec3<f32>(0.88, 0.94, 1.0);
+                if (temp1 < 0.22) {
+                    col1 = vec3<f32>(0.75, 0.88, 1.20); // B-class Rigel blue-white
+                } else if (temp1 > 0.82) {
+                    col1 = vec3<f32>(1.20, 0.82, 0.60); // M-class Betelgeuse orange-red
+                } else if (temp1 > 0.58) {
+                    col1 = vec3<f32>(1.10, 0.98, 0.80); // G-class Capella golden
                 }
-                let mag1 = pow((h1 - 0.935) / 0.065, 1.5);
-                let twinkle1 = 0.78 + 0.22 * sin(time * 3.4 + h1 * 67.3);
-                sky += col1 * (core1 * mag1 * twinkle1 * 1.65 * star_fade);
+                let mag = pow((h1 - 0.976) / 0.024, 1.3) * 0.78;
+                let twinkle = 0.86 + 0.14 * sin(time * 3.2 + h1 * 71.3);
+                sky += col1 * (core * mag * twinkle * star_fade);
             }
         }
 
-        // Layer 2: Rotated Fine Secondary Stars (Irrational 3D rotation breaks all grid alignment)
-        let rot_ray2 = vec3<f32>(
-            ray_dir.x * 0.36 + ray_dir.y * 0.48 - ray_dir.z * 0.80,
-            -ray_dir.x * 0.80 + ray_dir.y * 0.60,
-            ray_dir.x * 0.48 + ray_dir.y * 0.64 + ray_dir.z * 0.60
-        );
-        let p2 = rot_ray2 * 173.0;
-        let c2 = floor(p2);
-        let h2 = hash(c2);
-        if (h2 > 0.925) {
-            let s_pos2 = c2 + hash3_3(c2) * 0.70 + 0.15;
-            let s_dir2 = normalize(s_pos2);
-            let cos_s2 = dot(rot_ray2, s_dir2);
-            if (cos_s2 > 0.99986) {
-                let d_ang2 = max(1.0 - cos_s2, 0.0);
-                let core2 = exp(-d_ang2 * 320000.0);
-                let mag2 = pow((h2 - 0.925) / 0.075, 1.8) * 0.85;
-                let twinkle2 = 0.80 + 0.20 * sin(time * 2.8 + h2 * 53.1);
-                sky += vec3<f32>(0.85, 0.92, 1.0) * (core2 * mag2 * twinkle2 * 1.10 * star_fade);
-            }
-        }
-
-        // Layer 3: Faint Milky Way Stellar Dust
-        let rot_ray3 = vec3<f32>(
-            -ray_dir.x * 0.577 + ray_dir.y * 0.577 + ray_dir.z * 0.577,
-            ray_dir.x * 0.707 + ray_dir.y * 0.707,
-            -ray_dir.x * 0.408 + ray_dir.y * 0.408 - ray_dir.z * 0.816
-        );
-        let p3 = rot_ray3 * 238.0;
-        let c3 = floor(p3);
-        let h3 = hash(c3);
-        if (h3 > 0.910) {
-            let s_pos3 = c3 + hash3_3(c3) * 0.70 + 0.15;
-            let s_dir3 = normalize(s_pos3);
-            let cos_s3 = dot(rot_ray3, s_dir3);
-            if (cos_s3 > 0.99990) {
-                let d_ang3 = max(1.0 - cos_s3, 0.0);
-                let core3 = exp(-d_ang3 * 380000.0);
-                let mag3 = pow((h3 - 0.910) / 0.090, 2.0) * 0.45;
-                sky += vec3<f32>(0.78, 0.86, 1.05) * (core3 * mag3 * 0.65 * star_fade);
+        // Layer 2: Secondary Faint Pinpoint Stars (Golden angle irrational rotation)
+        let rot_phi = phi * 0.85065 + theta * 0.52573;
+        let rot_theta = -phi * 0.52573 + theta * 0.85065;
+        let uv2 = vec2<f32>(rot_phi * 89.0, rot_theta * 89.0);
+        let cell2 = floor(uv2);
+        let h2 = hash2d(cell2);
+        if (h2 > 0.983) {
+            let offset2 = vec2<f32>(fract(h2 * 29.3), fract(h2 * 61.9)) * 0.70 + 0.15;
+            let star_uv2 = (cell2 + offset2) / 89.0;
+            let s_rphi = star_uv2.x;
+            let s_rtheta = star_uv2.y;
+            let orig_phi = s_rphi * 0.85065 - s_rtheta * 0.52573;
+            let orig_theta = s_rphi * 0.52573 + s_rtheta * 0.85065;
+            let cos_t2 = cos(orig_theta);
+            let s_dir2 = vec3<f32>(cos(orig_phi) * cos_t2, sin(orig_theta), sin(orig_phi) * cos_t2);
+            let cos_s2 = dot(ray_dir, s_dir2);
+            if (cos_s2 > 0.999994) {
+                let d2 = (cos_s2 - 0.999994) / 0.000006;
+                let core2 = d2 * d2;
+                let mag2 = pow((h2 - 0.983) / 0.017, 1.5) * 0.55;
+                let twinkle2 = 0.88 + 0.12 * sin(time * 2.7 + h2 * 53.7);
+                sky += vec3<f32>(0.84, 0.92, 1.05) * (core2 * mag2 * twinkle2 * star_fade);
             }
         }
     }

@@ -382,15 +382,11 @@ fn fs_main(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @location
             shadow = textureSampleCompareLevel(t_shadow, s_shadow, in.shadow_pos.xy, shadow_depth);
         } else {
             let texel_size = 1.0 / 2048.0;
-            let ang = ign(in.clip_position.xy) * 6.2831853;
-            let ca = cos(ang);
-            let sa = sin(ang);
-            let rot = mat2x2<f32>(vec2<f32>(ca, sa), vec2<f32>(-sa, ca));
             let spread = texel_size * select(1.5, 2.2, shadow_tier >= 3u);
 
             var shadow_sum: f32 = 0.0;
             for (var p = 0u; p < 16u; p = p + 1u) {
-                let offset = rot * get_poisson_16(p) * spread;
+                let offset = get_poisson_16(p) * spread;
                 shadow_sum += textureSampleCompareLevel(t_shadow, s_shadow, in.shadow_pos.xy + offset, shadow_depth);
             }
             shadow = shadow_sum * (1.0 / 16.0);
@@ -439,14 +435,15 @@ fn fs_main(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @location
                 let l_dir = to_light * inv_l_dist;
                 let spot_dot = proj * inv_l_dist;
 
-                let hotspot = smoothstep(0.94, 0.988, spot_dot);
-                let flood = smoothstep(0.82, 0.94, spot_dot);
-                let beam_profile = hotspot * 0.90 + flood * 0.35;
+                let hotspot = smoothstep(0.965, 0.992, spot_dot);
+                let flood = smoothstep(0.86, 0.965, spot_dot);
+                let beam_profile = hotspot * 0.65 + flood * 0.22;
 
-                let atten = 1.0 / (1.0 + 0.065 * l_dist + 0.018 * l_dist_sq);
-                let dist_cutoff = clamp((54.0 - l_dist) * (1.0 / 10.0), 0.0, 1.0);
+                let near_soften = smoothstep(0.4, 2.0, l_dist);
+                let atten = (1.0 / (1.0 + 0.09 * l_dist + 0.022 * l_dist_sq)) * near_soften;
+                let dist_cutoff = clamp((50.0 - l_dist) * (1.0 / 10.0), 0.0, 1.0);
                 let flash_color = vec3<f32>(1.0, 0.97, 0.88);
-                let flash_power = beam_profile * atten * dist_cutoff * camera.flashlight_dir.w * 1.10;
+                let flash_power = beam_profile * atten * dist_cutoff * camera.flashlight_dir.w * 0.50;
 
                 let f_ndotl = max(dot(normal_dir, l_dir), 0.0);
                 let flash_diff = max(dot(normal_dir, l_dir) * 0.65 + 0.35, 0.0);
@@ -459,7 +456,7 @@ fn fs_main(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @location
                 let ff = f_schlick(f_vdoth, f0);
                 let fd = d_ggx(f_ndoth, blade_roughness);
                 let fv = v_smith_ggx(ndotv, f_ndotl, blade_roughness);
-                let blade_spec = min(fd * fv * ff, 0.70) * f_ndotl * in.height_factor;
+                let blade_spec = min(fd * fv * ff, 0.30) * f_ndotl * in.height_factor;
 
                 let total_flash = (flash_diff * albedo + flash_sss * albedo * sss_tint) * root_ao + blade_spec;
                 lit_color += total_flash * flash_color * flash_power;

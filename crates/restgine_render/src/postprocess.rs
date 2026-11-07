@@ -145,10 +145,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             surf_normal = -surf_normal;
         }
 
-        let angle = screen_ign * 6.2831853;
-        let c = cos(angle);
-        let s = sin(angle);
-        let rot = mat2x2<f32>(vec2<f32>(c, s), vec2<f32>(-s, c));
+        let rot = mat2x2<f32>(vec2<f32>(1.0, 0.0), vec2<f32>(0.0, 1.0));
 
         let base_rad = select(0.014, select(0.020, 0.028, gi_tier >= 3u), gi_tier >= 2u);
         let persp_scale = clamp(6.2 / max(total_dist, 1.2), 0.12, 1.4);
@@ -206,7 +203,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
         for (var step = 0u; step < num_steps; step = step + 1u) {
             // Non-linear quadratic distance march concentrates samples in near-field forest
-            let u_step = (f32(step) + screen_ign) / f32(num_steps);
+            let u_step = (f32(step) + 0.5) / f32(num_steps);
             let t_march = max_march_dist * (u_step * u_step);
             let step_len = 2.0 * max_march_dist * max(u_step, 0.06) / f32(num_steps);
             let p = camera.camera_pos.xyz + ray_dir * t_march;
@@ -299,7 +296,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                 let span = min(t_end - t_start, 32.0);
                 let f_steps = select(7u, 11u, effects_tier >= 2u);
                 let f_step_len = span / f32(f_steps);
-                var f_t = t_start + f_step_len * screen_ign;
+                var f_t = t_start + f_step_len * 0.5;
                 var beam_accum = vec3<f32>(0.0);
 
                 let flash_color = vec3<f32>(1.0, 0.97, 0.88);
@@ -315,45 +312,25 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
                     let core = smoothstep(0.97, 0.994, cos_ang);
                     let flood = smoothstep(0.91, 0.97, cos_ang);
-                    let profile = core * 0.85 + flood * 0.20;
+                    let profile = core * 0.70 + flood * 0.15;
 
-                    let atten = 1.0 / (1.0 + 0.14 * l_dist + 0.038 * l_dist_sq);
-                    let dist_cutoff = clamp((44.0 - l_dist) / 10.0, 0.0, 1.0);
+                    let near_ease = smoothstep(0.4, 2.0, l_dist);
+                    let atten = (1.0 / (1.0 + 0.16 * l_dist + 0.045 * l_dist_sq)) * near_ease;
+                    let dist_cutoff = clamp((40.0 - l_dist) / 10.0, 0.0, 1.0);
                     let cos_view = dot(-ray_dir, l_dir);
 
                     // Dual-lobe aerosol scattering with forward peak and subtle backscatter
                     let p_fwd = (1.0 - 0.40 * 0.40) / (12.56637 * pow(max(1.0 + 0.40 * 0.40 - 0.80 * cos_view, 0.05), 1.5));
-                    let p_back = pow(max(-cos_view, 0.0), 2.5) * 0.25;
-                    let phase_flash = 0.06 + p_fwd * 0.20 + p_back * 0.15;
-
-                    // Glowing floating forest spores / organic dust motes
-                    var spore_glow: f32 = 0.0;
-                    if (l_dist < 20.0) {
-                        let drift = vec3<f32>(time * 0.32, sin(time * 0.8 + p.x) * 0.22, time * 0.22);
-                        let sp = (p + drift) * 3.6;
-                        let cell_id = floor(sp);
-                        let p3 = fract(cell_id * vec3<f32>(0.1031, 0.1030, 0.0973));
-                        let cell_hash = fract((p3.x + p3.y) * (dot(p3, p3.yzx + 33.33)));
-                        if (cell_hash > 0.88) {
-                            let center_offset = vec3<f32>(
-                                fract(cell_hash * 13.7),
-                                fract(cell_hash * 29.3),
-                                fract(cell_hash * 47.1)
-                            ) * 0.6 + 0.2;
-                            let local_d = fract(sp) - center_offset;
-                            let r2 = dot(local_d, local_d);
-                            let sparkle = 0.5 + 0.5 * sin(time * 4.2 + cell_hash * 37.0);
-                            spore_glow = exp(-r2 * 24.0) * sparkle * clamp((20.0 - l_dist) * 0.1, 0.0, 1.0) * 1.0;
-                        }
-                    }
+                    let p_back = pow(max(-cos_view, 0.0), 2.5) * 0.20;
+                    let phase_flash = 0.05 + p_fwd * 0.10 + p_back * 0.06;
 
                     let density = clamp(1.0 - max(p.y, 0.0) * 0.15, 0.15, 1.0);
-                    let step_light = profile * atten * dist_cutoff * (phase_flash * density * 0.016 + spore_glow * 0.005) * f_step_len;
+                    let step_light = profile * atten * dist_cutoff * (phase_flash * density * 0.005) * f_step_len;
                     beam_accum += flash_color * step_light;
                     f_t += f_step_len;
                 }
 
-                beam_accum = min(beam_accum, vec3<f32>(0.075));
+                beam_accum = min(beam_accum, vec3<f32>(0.018));
                 scene_color += beam_accum * camera.flashlight_dir.w;
             }
         }
@@ -406,29 +383,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     // ------------------------------------------------------------------------
-    // 6. SCOTOPIC PURKINJE SHIFT & FINE 35MM CINEMATIC FILM GRAIN
+    // 6. SCOTOPIC PURKINJE SHIFT
     // ------------------------------------------------------------------------
     let luma = dot(scene_color, vec3<f32>(0.2126, 0.7152, 0.0722));
     let scotopic = exp(-luma * 6.5);
     let rod_color = vec3<f32>(0.68, 0.88, 1.25) * luma;
     scene_color = mix(scene_color, rod_color, scotopic * 0.32);
-
-    if (post_tier >= 2u) {
-        // High-frequency temporal noise with zero periodic dither lattice
-        let frame_time = fract(camera.settings.y * 24.0);
-        let t_seed = fract(frame_time * 0.6180339887);
-        let p_a = in.position.xy + vec2<f32>(t_seed * 47.11, t_seed * 83.19);
-        let p_b = in.position.xy + vec2<f32>(t_seed * 113.7, t_seed * 29.3);
-        let n1 = ign(p_a);
-        let n2 = ign(p_b);
-        // Triangular PDF distribution (sum of two uniform noises - 1.0) for natural analog grain
-        let tri_noise = n1 + n2 - 1.0;
-
-        let grain_scale = 4.0 * clamp(luma, 0.0, 1.0) * (1.0 - clamp(luma, 0.0, 1.0));
-        let grain_strength = select(0.006, 0.010, post_tier >= 3u);
-        let grain = tri_noise * grain_scale * grain_strength;
-        scene_color = max(scene_color + vec3<f32>(grain), vec3<f32>(0.0));
-    }
 
     // ------------------------------------------------------------------------
     // 7. FILM-GRADE ACEScc TONEMAPPING & GAMMA CORRECTION
