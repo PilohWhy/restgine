@@ -374,20 +374,18 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let to_light = camera.flashlight_pos.xyz - in.world_pos;
         let proj = -dot(to_light, camera.flashlight_dir.xyz);
         let dist_sq = dot(to_light, to_light);
-        if (proj > 0.0 && dist_sq < 3136.0 && proj * proj > 0.64 * dist_sq) {
+        if (proj > 0.0 && dist_sq < 2025.0 && proj * proj > 0.7744 * dist_sq) {
             let inv_dist = inverseSqrt(max(dist_sq, 0.000001));
             let dist = dist_sq * inv_dist;
             let l_dir = to_light * inv_dist;
             let spot_dot = proj * inv_dist;
 
-            let hotspot = smoothstep(0.925, 0.982, spot_dot);
-            let flood = smoothstep(0.80, 0.935, spot_dot);
-            let cone_angle = sqrt(max(2.0 - 2.0 * spot_dot, 0.0));
-            let ring_ripple = 1.0 + 0.06 * sin(cone_angle * 48.0) * (1.0 - hotspot);
-            let beam_profile = (hotspot * 1.45 + flood * 0.48) * ring_ripple;
+            let hotspot = smoothstep(0.94, 0.988, spot_dot);
+            let flood = smoothstep(0.82, 0.94, spot_dot);
+            let beam_profile = hotspot * 0.70 + flood * 0.25;
 
-            let atten = 1.0 / (1.0 + 0.055 * dist + 0.014 * dist_sq);
-            let dist_cutoff = clamp((56.0 - dist) / 12.0, 0.0, 1.0);
+            let atten = 1.0 / (1.0 + 0.08 * dist + 0.025 * dist_sq);
+            let dist_cutoff = clamp((48.0 - dist) / 10.0, 0.0, 1.0);
 
             let f_ndotl = max(dot(normal, l_dir), 0.0);
             let half_flash = normalize(l_dir + view_dir);
@@ -397,10 +395,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             let ff = f_schlick(f_vdoth, f0);
             let fd = d_ggx(f_ndoth, surface_roughness);
             let fv = v_smith_ggx(ndotv, f_ndotl, surface_roughness);
-            let flash_spec = min(fd * fv * ff, 3.0) * f_ndotl * (1.0 + puddle_depth * 1.5);
+            let flash_spec = min(fd * fv * ff, 0.45) * f_ndotl * (0.8 + puddle_depth * 1.2);
 
             let flash_color = vec3<f32>(1.0, 0.97, 0.88);
-            let flash_power = beam_profile * atten * dist_cutoff * camera.flashlight_dir.w * 1.6;
+            let flash_power = beam_profile * atten * dist_cutoff * camera.flashlight_dir.w * 0.65;
 
             lit_color += ((1.0 - ff) * f_ndotl * surface_albedo * final_ao + flash_spec * final_ao) * flash_color * flash_power;
         }

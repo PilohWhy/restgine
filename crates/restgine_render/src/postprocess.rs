@@ -250,7 +250,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             let f_dir = normalize(camera.flashlight_dir.xyz);
             let v = camera.camera_pos.xyz - f_pos;
 
-            let cos_cone = 0.82;
+            let cos_cone = 0.89;
             let c2 = cos_cone * cos_cone;
             let da = dot(ray_dir, f_dir);
             let va = dot(v, f_dir);
@@ -313,19 +313,18 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                     let l_dir = to_p * inv_l_dist;
                     let cos_ang = dot(l_dir, f_dir);
 
-                    let core = smoothstep(0.93, 0.985, cos_ang);
-                    let flood = smoothstep(0.82, 0.93, cos_ang);
-                    let cone_angle = sqrt(max(2.0 - 2.0 * cos_ang, 0.0));
-                    let reflector_ripple = 1.0 + 0.08 * sin(cone_angle * 52.0) * (1.0 - core);
-                    let profile = (core * 1.55 + flood * 0.45) * reflector_ripple;
+                    let core = smoothstep(0.97, 0.994, cos_ang);
+                    let flood = smoothstep(0.91, 0.97, cos_ang);
+                    let profile = core * 0.60 + flood * 0.12;
 
-                    let atten = 1.0 / (1.0 + 0.085 * l_dist + 0.020 * l_dist_sq);
+                    let atten = 1.0 / (1.0 + 0.18 * l_dist + 0.05 * l_dist_sq);
+                    let dist_cutoff = clamp((38.0 - l_dist) / 8.0, 0.0, 1.0);
                     let cos_view = dot(-ray_dir, l_dir);
 
-                    // Dual-lobe aerosol scattering with strong backscatter peak for first-person viewing
-                    let p_back = pow(max(-cos_view, 0.0), 3.2) * 2.2;
-                    let p_fwd = (1.0 - 0.49) / (12.56637 * pow(max(1.0 + 0.49 - 1.4 * cos_view, 0.04), 1.5));
-                    let phase_flash = 0.28 + p_back * 0.85 + p_fwd * 0.35;
+                    // Dual-lobe aerosol scattering with forward peak and subtle backscatter
+                    let p_fwd = (1.0 - 0.40 * 0.40) / (12.56637 * pow(max(1.0 + 0.40 * 0.40 - 0.80 * cos_view, 0.05), 1.5));
+                    let p_back = pow(max(-cos_view, 0.0), 2.5) * 0.20;
+                    let phase_flash = 0.05 + p_fwd * 0.15 + p_back * 0.10;
 
                     // Glowing floating forest spores / organic dust motes
                     var spore_glow: f32 = 0.0;
@@ -344,17 +343,17 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                             let local_d = fract(sp) - center_offset;
                             let r2 = dot(local_d, local_d);
                             let sparkle = 0.5 + 0.5 * sin(time * 4.2 + cell_hash * 37.0);
-                            spore_glow = exp(-r2 * 24.0) * sparkle * clamp((18.0 - l_dist) * 0.1, 0.0, 1.0) * 2.4;
+                            spore_glow = exp(-r2 * 24.0) * sparkle * clamp((18.0 - l_dist) * 0.1, 0.0, 1.0) * 0.75;
                         }
                     }
 
-                    let density = clamp(1.0 - max(p.y, 0.0) * 0.15, 0.18, 1.0);
-                    let step_light = profile * atten * (phase_flash * density * 0.14 + spore_glow * 0.08) * f_step_len;
+                    let density = clamp(1.0 - max(p.y, 0.0) * 0.15, 0.15, 1.0);
+                    let step_light = profile * atten * dist_cutoff * (phase_flash * density * 0.010 + spore_glow * 0.003) * f_step_len;
                     beam_accum += flash_color * step_light;
                     f_t += f_step_len;
                 }
 
-                beam_accum = min(beam_accum, vec3<f32>(0.45));
+                beam_accum = min(beam_accum, vec3<f32>(0.035));
                 scene_color += beam_accum * camera.flashlight_dir.w;
             }
         }
@@ -364,9 +363,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // 4. BALANCED MULTI-TAP CINEMATIC BLOOM (Natural Light Bleed without Glare)
     // ------------------------------------------------------------------------
     if (post_tier >= 1u) {
-        let thresh = select(1.25, select(1.10, 0.95, post_tier >= 3u), post_tier >= 2u);
-        let knee = 0.20;
-        let bloom_intensity = select(0.18, select(0.26, 0.35, post_tier >= 3u), post_tier >= 2u);
+        let thresh = select(2.5, select(2.0, 1.6, post_tier >= 3u), post_tier >= 2u);
+        let knee = 0.35;
+        let bloom_intensity = select(0.06, select(0.09, 0.12, post_tier >= 3u), post_tier >= 2u);
 
         // Center tap
         let c_center = extract_bloom(textureSample(t_scene, s_linear, in.uv).rgb, thresh, knee);
@@ -383,13 +382,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let m_t = extract_bloom(textureSample(t_scene, s_linear, in.uv + vec2<f32>( 0.0,  r2)).rgb, thresh * 1.15, knee);
         let m_b = extract_bloom(textureSample(t_scene, s_linear, in.uv + vec2<f32>( 0.0, -r2)).rgb, thresh * 1.15, knee);
         let m_l = extract_bloom(textureSample(t_scene, s_linear, in.uv + vec2<f32>(-r2,  0.0)).rgb, thresh * 1.15, knee);
-        let m_r = extract_bloom(textureSample(t_scene, s_linear, in.uv + vec2<f32>( r1,  0.0)).rgb, thresh * 1.15, knee);
+        let m_r = extract_bloom(textureSample(t_scene, s_linear, in.uv + vec2<f32>( r2,  0.0)).rgb, thresh * 1.15, knee);
 
         let multi_bloom = c_center * 0.45 +
             (i_t + i_b + i_l + i_r) * 0.10 +
             (m_t + m_b + m_l + m_r) * 0.038;
 
-        let bloom_tint = select(vec3<f32>(0.84, 0.92, 1.06), vec3<f32>(1.06, 0.96, 0.84), camera.flashlight_pos.w > 0.5);
+        let bloom_tint = select(vec3<f32>(0.84, 0.92, 1.06), vec3<f32>(1.02, 0.98, 0.92), camera.flashlight_pos.w > 0.5);
         scene_color += multi_bloom * bloom_tint * bloom_intensity;
     }
 
@@ -415,14 +414,19 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     scene_color = mix(scene_color, rod_color, scotopic * 0.32);
 
     if (post_tier >= 2u) {
-        let grain_time = fract(camera.settings.y * 17.31);
-        let grain_coord = in.position.xy + vec2<f32>(grain_time * 193.1, grain_time * 437.7);
-        let p3 = fract(vec3<f32>(grain_coord.x, grain_coord.y, grain_coord.x) * 0.1031);
-        let rand_noise = fract((p3.x + p3.y) * (p3.z + 33.33));
+        // High-frequency temporal noise with zero periodic dither lattice
+        let frame_time = fract(camera.settings.y * 24.0);
+        let t_seed = fract(frame_time * 0.6180339887);
+        let p_a = in.position.xy + vec2<f32>(t_seed * 47.11, t_seed * 83.19);
+        let p_b = in.position.xy + vec2<f32>(t_seed * 113.7, t_seed * 29.3);
+        let n1 = ign(p_a);
+        let n2 = ign(p_b);
+        // Triangular PDF distribution (sum of two uniform noises - 1.0) for natural analog grain
+        let tri_noise = n1 + n2 - 1.0;
 
         let grain_scale = 4.0 * clamp(luma, 0.0, 1.0) * (1.0 - clamp(luma, 0.0, 1.0));
-        let grain_strength = select(0.005, 0.009, post_tier >= 3u);
-        let grain = (rand_noise - 0.5) * grain_scale * grain_strength;
+        let grain_strength = select(0.006, 0.010, post_tier >= 3u);
+        let grain = tri_noise * grain_scale * grain_strength;
         scene_color = max(scene_color + vec3<f32>(grain), vec3<f32>(0.0));
     }
 
@@ -655,7 +659,7 @@ mod tests {
         total_dist: f32,
     ) -> (f32, f32) {
         let v = cam_pos - f_pos;
-        let cos_cone = 0.82_f32;
+        let cos_cone = 0.89_f32;
         let c2 = cos_cone * cos_cone;
         let da = ray_dir.dot(f_dir);
         let va = v.dot(f_dir);
@@ -724,7 +728,7 @@ mod tests {
         assert!(e_back <= s_back, "Opposite ray must execute 0 volumetric steps");
 
         // 3. Grazing cone boundary ray where qa is negative and |qa| < 1e-5
-        let cos_cone = 0.82_f32;
+        let cos_cone = 0.89_f32;
         let grazing_da = cos_cone - 1e-6;
         let grazing_sin = (1.0 - grazing_da * grazing_da).sqrt();
         // Angle toward +X (across the offset flashlight beam)
@@ -739,7 +743,7 @@ mod tests {
         let mid_p = cam_pos + grazing_ray * (0.5 * (s_gr + e_gr)) - f_pos;
         assert!(
             mid_p.normalize().dot(f_dir) >= cos_cone - 1e-3,
-            "Midpoint of grazing interval must lie inside the 35-deg cone"
+            "Midpoint of grazing interval must lie inside the tactical cone"
         );
 
         // 4. Pitch straight up (+89 deg) and straight down (-89 deg)

@@ -40,6 +40,12 @@ fn hash(p: vec3<f32>) -> f32 {
     return fract((p3.x + p3.y) * d);
 }
 
+fn hash3_3(p: vec3<f32>) -> vec3<f32> {
+    var p3 = fract(p * vec3<f32>(0.1031, 0.1030, 0.0973));
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.xxy + p3.yzz) * p3.zyx);
+}
+
 fn hash2d(p: vec2<f32>) -> f32 {
     var p3 = fract(vec3<f32>(p.x, p.y, p.x) * 0.1031);
     p3 += dot(p3, p3.yzx + 33.33);
@@ -68,10 +74,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let sun_dot = max(dot(ray_dir, sun_dir), 0.0);
 
     // 1. Rayleigh & Mie Nocturnal Atmospheric Gradient:
-    let zenith_color = vec3<f32>(0.008, 0.016, 0.052);
-    let mid_color = vec3<f32>(0.022, 0.042, 0.088);
-    let horizon_color = vec3<f32>(0.04, 0.07, 0.13);
-    let ground_color = vec3<f32>(0.02, 0.03, 0.05);
+    let zenith_color = vec3<f32>(0.005, 0.010, 0.032);
+    let mid_color = vec3<f32>(0.015, 0.028, 0.062);
+    let horizon_color = vec3<f32>(0.032, 0.055, 0.095);
+    let ground_color = vec3<f32>(0.015, 0.022, 0.035);
 
     let up = ray_dir.y;
     var sky: vec3<f32>;
@@ -82,7 +88,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         sky = mix(zenith_color, mid_color, 1.0 - t_mid);
         sky = mix(sky, horizon_color, optical_horizon);
         // Subtle silver-cyan Rayleigh sky glow toward the moon azimuth
-        sky += vec3<f32>(0.025, 0.045, 0.085) * pow(sun_dot, 3.0) * (1.0 - up * 0.5);
+        sky += vec3<f32>(0.018, 0.032, 0.060) * pow(sun_dot, 3.0) * (1.0 - up * 0.5);
     } else {
         sky = mix(horizon_color, ground_color, clamp(-up * 4.0, 0.0, 1.0));
     }
@@ -131,35 +137,76 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         sky = mix(sky, sky + cirrus_color, cloud_density * 0.65);
     }
 
-    // 3. Crisp, Point-like Celestial Starfield (Pinpricks of light without voxel grid artifacts)
-    if (up > 0.05 && sun_dot < 0.9985) {
-        let az = atan2(ray_dir.z, ray_dir.x);
-        let el = asin(clamp(ray_dir.y, -1.0, 1.0));
-        let star_uv = vec2<f32>(az * 52.0, el * 52.0);
-        let cell = floor(star_uv);
-        let frac_pos = fract(star_uv) - 0.5;
+    // 3. Multi-Magnitude Organic Celestial Starfield (Pinpoint stars without coordinate grid artifacts)
+    if (up > 0.04 && sun_dot < 0.9985) {
+        let star_fade = smoothstep(0.04, 0.24, up) * (1.0 - cloud_density * 0.80);
 
-        let s_hash = hash2d(cell);
-        if (s_hash > 0.945) {
-            let jx = hash2d(cell + vec2<f32>(1.7, 9.2)) - 0.5;
-            let jy = hash2d(cell + vec2<f32>(8.3, 4.1)) - 0.5;
-            let d_star = length(frac_pos - vec2<f32>(jx, jy) * 0.65);
-
-            // Sub-pixel circular star core (smooth circular falloff, not cubic voxel)
-            let star_point = smoothstep(0.14, 0.0, d_star);
-            if (star_point > 0.0) {
-                let temp_hash = fract(s_hash * 37.19);
-                var star_color = vec3<f32>(0.85, 0.92, 1.0);
-                if (temp_hash < 0.28) {
-                    star_color = vec3<f32>(0.75, 0.88, 1.15); // Blue-white
-                } else if (temp_hash > 0.82) {
-                    star_color = vec3<f32>(1.15, 0.82, 0.65); // Warm gold
+        // Layer 1: Bright & Medium Primary Stars
+        let p1 = ray_dir * 115.0;
+        let c1 = floor(p1);
+        let h1 = hash(c1);
+        if (h1 > 0.935) {
+            let s_pos1 = c1 + hash3_3(c1) * 0.70 + 0.15;
+            let s_dir1 = normalize(s_pos1);
+            let cos_s1 = dot(ray_dir, s_dir1);
+            if (cos_s1 > 0.99980) {
+                let d_ang1 = max(1.0 - cos_s1, 0.0);
+                let core1 = exp(-d_ang1 * 260000.0);
+                let temp1 = fract(h1 * 41.7);
+                var col1 = vec3<f32>(0.88, 0.93, 1.0);
+                if (temp1 < 0.25) {
+                    col1 = vec3<f32>(0.72, 0.86, 1.22); // B-class Rigel blue-white
+                } else if (temp1 > 0.80) {
+                    col1 = vec3<f32>(1.22, 0.78, 0.58); // M-class Betelgeuse orange-red
+                } else if (temp1 > 0.55) {
+                    col1 = vec3<f32>(1.12, 0.98, 0.76); // G-class Capella golden
                 }
+                let mag1 = pow((h1 - 0.935) / 0.065, 1.5);
+                let twinkle1 = 0.78 + 0.22 * sin(time * 3.4 + h1 * 67.3);
+                sky += col1 * (core1 * mag1 * twinkle1 * 1.65 * star_fade);
+            }
+        }
 
-                let twinkle = 0.75 + 0.25 * sin(time * 2.8 + s_hash * 62.0);
-                let mag = pow((s_hash - 0.945) / 0.055, 2.0);
-                let star_fade = smoothstep(0.05, 0.22, up) * (1.0 - cloud_density * 0.75);
-                sky += star_color * (star_point * mag * twinkle * 0.70 * star_fade);
+        // Layer 2: Rotated Fine Secondary Stars (Irrational 3D rotation breaks all grid alignment)
+        let rot_ray2 = vec3<f32>(
+            ray_dir.x * 0.36 + ray_dir.y * 0.48 - ray_dir.z * 0.80,
+            -ray_dir.x * 0.80 + ray_dir.y * 0.60,
+            ray_dir.x * 0.48 + ray_dir.y * 0.64 + ray_dir.z * 0.60
+        );
+        let p2 = rot_ray2 * 173.0;
+        let c2 = floor(p2);
+        let h2 = hash(c2);
+        if (h2 > 0.925) {
+            let s_pos2 = c2 + hash3_3(c2) * 0.70 + 0.15;
+            let s_dir2 = normalize(s_pos2);
+            let cos_s2 = dot(rot_ray2, s_dir2);
+            if (cos_s2 > 0.99986) {
+                let d_ang2 = max(1.0 - cos_s2, 0.0);
+                let core2 = exp(-d_ang2 * 320000.0);
+                let mag2 = pow((h2 - 0.925) / 0.075, 1.8) * 0.85;
+                let twinkle2 = 0.80 + 0.20 * sin(time * 2.8 + h2 * 53.1);
+                sky += vec3<f32>(0.85, 0.92, 1.0) * (core2 * mag2 * twinkle2 * 1.10 * star_fade);
+            }
+        }
+
+        // Layer 3: Faint Milky Way Stellar Dust
+        let rot_ray3 = vec3<f32>(
+            -ray_dir.x * 0.577 + ray_dir.y * 0.577 + ray_dir.z * 0.577,
+            ray_dir.x * 0.707 + ray_dir.y * 0.707,
+            -ray_dir.x * 0.408 + ray_dir.y * 0.408 - ray_dir.z * 0.816
+        );
+        let p3 = rot_ray3 * 238.0;
+        let c3 = floor(p3);
+        let h3 = hash(c3);
+        if (h3 > 0.910) {
+            let s_pos3 = c3 + hash3_3(c3) * 0.70 + 0.15;
+            let s_dir3 = normalize(s_pos3);
+            let cos_s3 = dot(rot_ray3, s_dir3);
+            if (cos_s3 > 0.99990) {
+                let d_ang3 = max(1.0 - cos_s3, 0.0);
+                let core3 = exp(-d_ang3 * 380000.0);
+                let mag3 = pow((h3 - 0.910) / 0.090, 2.0) * 0.45;
+                sky += vec3<f32>(0.78, 0.86, 1.05) * (core3 * mag3 * 0.65 * star_fade);
             }
         }
     }

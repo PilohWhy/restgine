@@ -447,20 +447,18 @@ fn fs_bark(in: VertexOutput) -> @location(0) vec4<f32> {
         let to_light = camera.flashlight_pos.xyz - in.world_pos;
         let proj = -dot(to_light, camera.flashlight_dir.xyz);
         let l_dist_sq = dot(to_light, to_light);
-        if (proj > 0.0 && l_dist_sq < 3136.0 && proj * proj > 0.64 * l_dist_sq) {
+        if (proj > 0.0 && l_dist_sq < 2025.0 && proj * proj > 0.7744 * l_dist_sq) {
             let inv_dist = inverseSqrt(max(l_dist_sq, 0.000001));
             let l_dist = l_dist_sq * inv_dist;
             let l_dir = to_light * inv_dist;
             let spot_dot = proj * inv_dist;
 
-            let hotspot = smoothstep(0.925, 0.982, spot_dot);
-            let flood = smoothstep(0.80, 0.935, spot_dot);
-            let cone_angle = sqrt(max(2.0 - 2.0 * spot_dot, 0.0));
-            let ring_ripple = 1.0 + 0.06 * sin(cone_angle * 48.0) * (1.0 - hotspot);
-            let beam_profile = (hotspot * 1.45 + flood * 0.48) * ring_ripple;
+            let hotspot = smoothstep(0.94, 0.988, spot_dot);
+            let flood = smoothstep(0.82, 0.94, spot_dot);
+            let beam_profile = hotspot * 0.70 + flood * 0.25;
 
-            let atten = 1.0 / (1.0 + 0.055 * l_dist + 0.014 * l_dist_sq);
-            let dist_cutoff = clamp((56.0 - l_dist) / 12.0, 0.0, 1.0);
+            let atten = 1.0 / (1.0 + 0.08 * l_dist + 0.025 * l_dist_sq);
+            let dist_cutoff = clamp((48.0 - l_dist) / 10.0, 0.0, 1.0);
             let f_ndotl = max(dot(normal, l_dir), 0.0);
             let half_flash = normalize(l_dir + view_dir);
             let f_ndoth = max(dot(normal, half_flash), 0.0);
@@ -469,10 +467,10 @@ fn fs_bark(in: VertexOutput) -> @location(0) vec4<f32> {
             let ff = f_schlick(f_vdoth, f0);
             let fd = d_ggx(f_ndoth, bark_roughness);
             let fv = v_smith_ggx(ndotv, f_ndotl, bark_roughness);
-            let flash_spec = min(fd * fv * ff, 5.0) * f_ndotl;
+            let flash_spec = min(fd * fv * ff, 0.35) * f_ndotl;
 
             let flash_color = vec3<f32>(1.0, 0.96, 0.88);
-            let flash_power = beam_profile * atten * dist_cutoff * camera.flashlight_dir.w * 1.6;
+            let flash_power = beam_profile * atten * dist_cutoff * camera.flashlight_dir.w * 0.60;
 
             lit_color += ((1.0 - ff) * f_ndotl * albedo + flash_spec) * flash_color * flash_power;
         }
@@ -609,26 +607,24 @@ fn fs_leaf(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @location
         let to_light = camera.flashlight_pos.xyz - in.world_pos;
         let proj = -dot(to_light, camera.flashlight_dir.xyz);
         let l_dist_sq = dot(to_light, to_light);
-        if (proj > 0.0 && l_dist_sq < 3136.0 && proj * proj > 0.64 * l_dist_sq) {
+        if (proj > 0.0 && l_dist_sq < 2025.0 && proj * proj > 0.7744 * l_dist_sq) {
             let inv_dist = inverseSqrt(max(l_dist_sq, 0.000001));
             let l_dist = l_dist_sq * inv_dist;
             let l_dir = to_light * inv_dist;
             let spot_dot = proj * inv_dist;
 
-            let hotspot = smoothstep(0.925, 0.982, spot_dot);
-            let flood = smoothstep(0.80, 0.935, spot_dot);
-            let cone_angle = sqrt(max(2.0 - 2.0 * spot_dot, 0.0));
-            let ring_ripple = 1.0 + 0.06 * sin(cone_angle * 48.0) * (1.0 - hotspot);
-            let beam_profile = (hotspot * 1.45 + flood * 0.48) * ring_ripple;
+            let hotspot = smoothstep(0.94, 0.988, spot_dot);
+            let flood = smoothstep(0.82, 0.94, spot_dot);
+            let beam_profile = hotspot * 0.70 + flood * 0.25;
 
-            let atten = 1.0 / (1.0 + 0.055 * l_dist + 0.014 * l_dist_sq);
-            let dist_cutoff = clamp((56.0 - l_dist) / 12.0, 0.0, 1.0);
+            let atten = 1.0 / (1.0 + 0.08 * l_dist + 0.025 * l_dist_sq);
+            let dist_cutoff = clamp((48.0 - l_dist) / 10.0, 0.0, 1.0);
             let flash_color = vec3<f32>(1.0, 0.96, 0.88);
-            let flash_power = beam_profile * atten * dist_cutoff * camera.flashlight_dir.w * 1.6;
+            let flash_power = beam_profile * atten * dist_cutoff * camera.flashlight_dir.w * 0.60;
 
             let flash_diff = max(dot(normal_dir, l_dir), 0.0);
             let flash_back = max(dot(view_dir, -l_dir), 0.0);
-            let flash_sss = flash_back * flash_back * sqrt(flash_back) * 0.45;
+            let flash_sss = flash_back * flash_back * sqrt(flash_back) * 0.25;
 
             let half_flash = normalize(l_dir + view_dir);
             let f_ndoth = max(dot(normal_dir, half_flash), 0.0);
@@ -637,7 +633,7 @@ fn fs_leaf(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @location
             let ff = f_schlick(f_vdoth, f0);
             let fd = d_ggx(f_ndoth, leaf_roughness);
             let fv = v_smith_ggx(ndotv, f_ndotl, leaf_roughness);
-            let flash_spec = min(fd * fv * ff, 2.0) * f_ndotl;
+            let flash_spec = min(fd * fv * ff, 0.35) * f_ndotl;
 
             let total_flash = (flash_diff * albedo + flash_sss * albedo * sss_tint) + flash_spec * flash_color;
             lit_color += total_flash * flash_color * flash_power;
