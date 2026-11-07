@@ -315,20 +315,20 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
                     let core = smoothstep(0.97, 0.994, cos_ang);
                     let flood = smoothstep(0.91, 0.97, cos_ang);
-                    let profile = core * 0.60 + flood * 0.12;
+                    let profile = core * 0.85 + flood * 0.20;
 
-                    let atten = 1.0 / (1.0 + 0.18 * l_dist + 0.05 * l_dist_sq);
-                    let dist_cutoff = clamp((38.0 - l_dist) / 8.0, 0.0, 1.0);
+                    let atten = 1.0 / (1.0 + 0.14 * l_dist + 0.038 * l_dist_sq);
+                    let dist_cutoff = clamp((44.0 - l_dist) / 10.0, 0.0, 1.0);
                     let cos_view = dot(-ray_dir, l_dir);
 
                     // Dual-lobe aerosol scattering with forward peak and subtle backscatter
                     let p_fwd = (1.0 - 0.40 * 0.40) / (12.56637 * pow(max(1.0 + 0.40 * 0.40 - 0.80 * cos_view, 0.05), 1.5));
-                    let p_back = pow(max(-cos_view, 0.0), 2.5) * 0.20;
-                    let phase_flash = 0.05 + p_fwd * 0.15 + p_back * 0.10;
+                    let p_back = pow(max(-cos_view, 0.0), 2.5) * 0.25;
+                    let phase_flash = 0.06 + p_fwd * 0.20 + p_back * 0.15;
 
                     // Glowing floating forest spores / organic dust motes
                     var spore_glow: f32 = 0.0;
-                    if (l_dist < 18.0) {
+                    if (l_dist < 20.0) {
                         let drift = vec3<f32>(time * 0.32, sin(time * 0.8 + p.x) * 0.22, time * 0.22);
                         let sp = (p + drift) * 3.6;
                         let cell_id = floor(sp);
@@ -343,17 +343,17 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                             let local_d = fract(sp) - center_offset;
                             let r2 = dot(local_d, local_d);
                             let sparkle = 0.5 + 0.5 * sin(time * 4.2 + cell_hash * 37.0);
-                            spore_glow = exp(-r2 * 24.0) * sparkle * clamp((18.0 - l_dist) * 0.1, 0.0, 1.0) * 0.75;
+                            spore_glow = exp(-r2 * 24.0) * sparkle * clamp((20.0 - l_dist) * 0.1, 0.0, 1.0) * 1.0;
                         }
                     }
 
                     let density = clamp(1.0 - max(p.y, 0.0) * 0.15, 0.15, 1.0);
-                    let step_light = profile * atten * dist_cutoff * (phase_flash * density * 0.010 + spore_glow * 0.003) * f_step_len;
+                    let step_light = profile * atten * dist_cutoff * (phase_flash * density * 0.016 + spore_glow * 0.005) * f_step_len;
                     beam_accum += flash_color * step_light;
                     f_t += f_step_len;
                 }
 
-                beam_accum = min(beam_accum, vec3<f32>(0.035));
+                beam_accum = min(beam_accum, vec3<f32>(0.075));
                 scene_color += beam_accum * camera.flashlight_dir.w;
             }
         }

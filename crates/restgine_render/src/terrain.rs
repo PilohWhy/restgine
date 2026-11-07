@@ -382,10 +382,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
             let hotspot = smoothstep(0.94, 0.988, spot_dot);
             let flood = smoothstep(0.82, 0.94, spot_dot);
-            let beam_profile = hotspot * 0.70 + flood * 0.25;
+            let beam_profile = hotspot * 0.90 + flood * 0.35;
 
-            let atten = 1.0 / (1.0 + 0.08 * dist + 0.025 * dist_sq);
-            let dist_cutoff = clamp((48.0 - dist) / 10.0, 0.0, 1.0);
+            let atten = 1.0 / (1.0 + 0.065 * dist + 0.018 * dist_sq);
+            let dist_cutoff = clamp((54.0 - dist) / 10.0, 0.0, 1.0);
 
             let f_ndotl = max(dot(normal, l_dir), 0.0);
             let half_flash = normalize(l_dir + view_dir);
@@ -395,10 +395,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             let ff = f_schlick(f_vdoth, f0);
             let fd = d_ggx(f_ndoth, surface_roughness);
             let fv = v_smith_ggx(ndotv, f_ndotl, surface_roughness);
-            let flash_spec = min(fd * fv * ff, 0.45) * f_ndotl * (0.8 + puddle_depth * 1.2);
+            let flash_spec = min(fd * fv * ff, 0.85) * f_ndotl * (0.8 + puddle_depth * 1.5);
 
             let flash_color = vec3<f32>(1.0, 0.97, 0.88);
-            let flash_power = beam_profile * atten * dist_cutoff * camera.flashlight_dir.w * 0.65;
+            let flash_power = beam_profile * atten * dist_cutoff * camera.flashlight_dir.w * 1.15;
 
             lit_color += ((1.0 - ff) * f_ndotl * surface_albedo * final_ao + flash_spec * final_ao) * flash_color * flash_power;
         }
