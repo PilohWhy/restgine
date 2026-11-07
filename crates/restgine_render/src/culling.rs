@@ -18,8 +18,8 @@ impl Plane {
             }
         } else {
             Self {
-                normal: Vec3::Y,
-                d: 0.0,
+                normal: Vec3::ZERO,
+                d,
             }
         }
     }
@@ -77,10 +77,10 @@ impl BoundingSphere {
 }
 
 /// High-performance 3D Camera Viewing Frustum extracted from View-Projection matrix.
-/// Supports both standard and Reversed-Z infinite perspective projections.
+/// Supports both standard/orthographic and Reversed-Z infinite perspective projections.
 #[derive(Debug, Clone, Copy)]
 pub struct Frustum {
-    /// Planes: 0=Left, 1=Right, 2=Bottom, 3=Top, 4=Near, 5=Far
+    /// Planes: 0=Left, 1=Right, 2=Bottom, 3=Top, 4=Near(RevZ)/Far(Std), 5=Far(RevZ)/Near(Std)
     pub planes: [Plane; 6],
 }
 
@@ -101,10 +101,10 @@ impl Frustum {
         let p_bottom = row3 + row1;
         // Top plane: row3 - row1
         let p_top = row3 - row1;
-        // Near plane (for [0, 1] clip space): row2 (or row3 + row2 depending on convention)
-        let p_near = row2;
-        // Far plane: row3 - row2
-        let p_far = row3 - row2;
+        // Clip Z <= W plane (Near plane in Reversed-Z, Far plane in Standard-Z / Ortho): row3 - row2
+        let p_z_max = row3 - row2;
+        // Clip Z >= 0 plane (Infinite Far in Reversed-Z, Near plane in Standard-Z / Ortho): row2
+        let p_z_min = row2;
 
         Self {
             planes: [
@@ -112,8 +112,8 @@ impl Frustum {
                 Plane::new(p_right.x, p_right.y, p_right.z, p_right.w),
                 Plane::new(p_bottom.x, p_bottom.y, p_bottom.z, p_bottom.w),
                 Plane::new(p_top.x, p_top.y, p_top.z, p_top.w),
-                Plane::new(p_near.x, p_near.y, p_near.z, p_near.w),
-                Plane::new(p_far.x, p_far.y, p_far.z, p_far.w),
+                Plane::new(p_z_max.x, p_z_max.y, p_z_max.z, p_z_max.w),
+                Plane::new(p_z_min.x, p_z_min.y, p_z_min.z, p_z_min.w),
             ],
         }
     }
@@ -121,8 +121,7 @@ impl Frustum {
     /// Fast test if a Bounding Sphere is inside or intersecting the frustum.
     #[inline]
     pub fn intersects_sphere(&self, sphere: &BoundingSphere) -> bool {
-        for plane in &self.planes[..5] {
-            // First 5 planes (Left, Right, Bottom, Top, Near)
+        for plane in &self.planes {
             if plane.distance_to_point(sphere.center) < -sphere.radius {
                 return false;
             }
@@ -133,7 +132,7 @@ impl Frustum {
     /// Fast test if an AABB is inside or intersecting the frustum.
     #[inline]
     pub fn intersects_aabb(&self, aabb: &AABB) -> bool {
-        for plane in &self.planes[..5] {
+        for plane in &self.planes {
             // Find positive vertex in direction of normal
             let px = if plane.normal.x >= 0.0 {
                 aabb.max.x
@@ -173,5 +172,30 @@ impl Frustum {
             max: Vec3::new(min_x + size, max_y, min_z + size),
         };
         self.intersects_aabb(&aabb)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::camera3d::Camera3D;
+
+    #[test]
+    fn test_reversed_z_frustum_near_plane_and_negative_y() {
+        // Camera at Y = -10.0 looking along -Z
+        let cam = Camera3D::new(
+            Vec3::new(0.0, -10.0, 0.0),
+            Vec3::new(0.0, -10.0, -1.0),
+            16.0 / 9.0,
+        );
+        let frustum = cam.frustum();
+
+        // Geometry at Y = -10.0 directly in front of camera (Z = -5.0) must be visible
+        assert!(frustum.intersects_sphere(&BoundingSphere::new(Vec3::new(0.0, -10.0, -5.0), 1.0)));
+        assert!(frustum.intersects_chunk(-2.0, -7.0, 4.0, -12.0, -8.0));
+
+        // Geometry behind camera (Z = +5.0) must be culled
+        assert!(!frustum.intersects_sphere(&BoundingSphere::new(Vec3::new(0.0, -10.0, 5.0), 1.0)));
+        assert!(!frustum.intersects_chunk(-2.0, 3.0, 4.0, -12.0, -8.0));
     }
 }

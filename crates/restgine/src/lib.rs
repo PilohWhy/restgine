@@ -43,11 +43,12 @@ pub mod prelude {
     pub use restgine_render::camera3d::Camera3D;
     pub use restgine_render::culling::{BoundingSphere, Frustum, Plane, AABB};
     pub use restgine_render::foliage::{
-        scatter_chunk_grass, FoliagePipeline, GrassInstanceRaw, GrassVertex,
+        compute_visible_grass_mask, gather_visible_grass_instances, scatter_chunk_grass,
+        FoliagePipeline, GrassChunk, GrassInstanceRaw, GrassSubPatch, GrassVertex,
     };
     pub use restgine_render::forest::{
-        scatter_chunk_forest, ForestInstanceRaw, ForestPipeline, ForestVariant, ForestVertex,
-        TreeCollider,
+        cull_forest_chunks_camera, cull_forest_chunks_shadow, scatter_chunk_forest, ForestChunk,
+        ForestInstanceRaw, ForestPipeline, ForestVariant, ForestVertex, TreeCollider,
     };
     pub use restgine_render::mesh3d::{
         CameraSettingsInput, Mesh3DInstanceRaw, Mesh3DPipeline, Mesh3DVertex,
